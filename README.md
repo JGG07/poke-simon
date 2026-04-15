@@ -1,6 +1,6 @@
 # Simon Pokemon
 
-Este proyecto es un juego tipo Simon hecho con Python y una ESP32.
+Este es mi proyecto de un juego tipo Simon hecho con Python y una ESP32.
 
 La computadora corre la logica principal del juego y la ESP32 se encarga del display, audio y microfono cuando esta conectada.
 
@@ -19,7 +19,7 @@ La computadora corre la logica principal del juego y la ESP32 se encarga del dis
 - `data/pokedex.json`
 - `firmware/projects/pokedex-c/pokedex-c.ino`
 
-Nota: algunos archivos conservan nombres viejos como `pokedex.json` o `pokedex-c`, pero el proyecto actual es solo el juego Simon Pokemon.
+Nota: algunos archivos conservan nombres viejos como `pokedex.json` o `pokedex-c`, pero mi proyecto actual es solo el juego Simon Pokemon.
 
 ## Como correr el proyecto
 
