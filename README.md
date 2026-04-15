@@ -12,14 +12,20 @@ La computadora corre la logica principal del juego y la ESP32 se encarga del dis
 - escucha la respuesta del jugador por voz
 - compara la secuencia y termina cuando el jugador falla
 
+## Hardware
+
+- ESP32-S3 de 16mb
+- Micrófono INMP441
+- Amplificador MAX98357A
+- Bocina genérica de 5 volts.
+
+
 ## Archivos importantes
 
 - `simon_pokemon.py`
 - `app/desktop/simon_pokemon.py`
 - `data/pokedex.json`
 - `firmware/projects/pokedex-c/pokedex-c.ino`
-
-Nota: algunos archivos conservan nombres viejos como `pokedex.json` o `pokedex-c`, pero mi proyecto actual es solo el juego Simon Pokemon.
 
 ## Como correr el proyecto
 
@@ -44,11 +50,26 @@ python simon_pokemon.py
 5. El programa transcribe la voz y valida el orden.
 6. Si hay un error, el juego termina y muestra el puntaje.
 
+## Librerías
+
+1. Faster Whisper: Faster whisper es la librería encargada de pasar el audio en formato wav a texto y así poder hacer que el juego lo entienda.
+2. Pyserial: Es el que hace la conexión con la esp32s3 para la transferencia de datos.
+3. Wave: Convierte el texto a audio wav.
+4. Json: Librería que permite leer archivos json.
+5. Random: Libería que se usa para sacar de una lista un dato aleatorio.
+6. re: Esta librería proporciona operaciones de coincidencia de expresiones regulares similares a las encontradas en Perl.
+7. sys: Esta librería proporciona acceso a algunas variables utilizadas o mantenidas por el intérprete y a funciones que interactúan estrechamente con él.
+8. tempfile: Esta librería es para manejar archivos temporales.
+9. time: Esta librería provee varias funciones para manipular valores de tiempo.
+10. unicodedata: Esta librería proporciona acceso a la base de datos de caracteres Unicode (UCD), que define las propiedades de todos los caracteres.
+11. SequenceMatcher: Esta librería se usa para comparar pares de secuencias para encontrar similitudes y diferencias.
+12. path: Esta librería se usa para la gestión de rutas de archivos.
+
 ## Notas
 
-- el puerto serial actual esta configurado como `COM11` en `app/desktop/simon_pokemon.py`
-- si no hay ESP32 conectada, no funcionaran igual el display, microfono y audio por serial
-- si falta `faster-whisper`, el reconocimiento por voz no estara disponible
+- El puerto serial actual esta configurado como `COM11` en `app/desktop/simon_pokemon.py`. (Se tiene que configurar conforme al COM que conectó en su sistema).
+- Si no hay ESP32 conectada, no funcionaran igual el display, microfono y audio por serial.
+- Si falta `faster-whisper`, el reconocimiento por voz no estara disponible.
 
 ## Estructura rapida
 
@@ -74,14 +95,14 @@ pokemon-micropython/
 
 ## Firmware
 
-- recibe comandos por serial
-- muestra Pokemon y texto en el display
-- reproduce audio cargado desde la PC
-- puede grabar audio del microfono
+- Recibe el nombre de los pokemones através del serial.
+- Muestra la imagen del Pokemon, su sonido y texto en el display.
+- Reproduce audio cargado desde la PC.
+- Puede grabar audio del microfono INMP441.
 
 ## Pendiente
 
-- mejorar reconocimiento de voz
-- ajustar tiempos y dificultad
-- limpiar nombres heredados del proyecto
-- mejorar la documentacion
+- Mejorar reconocimiento de voz.
+- Ajustar tiempos y dificultad.
+- Limpiar nombres heredados del proyecto.
+- Mejorar la documentacion.
