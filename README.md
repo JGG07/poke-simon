@@ -1,107 +1,87 @@
-# Proyecto Pokemon
+# Simon Pokemon
 
-Este proyecto lo hicimos para usar una pokedex con Python y una ESP32.
+Este proyecto es un juego tipo Simon hecho con Python y una ESP32.
 
-Tiene 2 partes:
+La computadora corre la logica principal del juego y la ESP32 se encarga del display, audio y microfono cuando esta conectada.
 
-- una pokedex por voz
-- un juego tipo simon con pokemones
+## Que hace
 
-La idea general es que la compu haga la mayor parte de la logica y la ESP32 ayude con el display, sonidos y microfono.
-
-## Cosas que tiene
-
-- juego de simon pokemon
-- pokedex por voz
-- display con la ESP32
-- reproduccion de audio
-- lectura de `pokedex.json`
-
-## Pokemon que usa ahorita el simon
-
-Por ahorita el juego esta simplificado y solo usa estos 4:
-
-- Bulbasaur
-- Charmander
-- Squirtle
-- Pikachu
+- genera una secuencia aleatoria de Pokemon
+- muestra cada Pokemon en el display de la ESP32
+- reproduce su sonido
+- escucha la respuesta del jugador por voz
+- compara la secuencia y termina cuando el jugador falla
 
 ## Archivos importantes
 
+- `simon_pokemon.py`
 - `app/desktop/simon_pokemon.py`
-- `app/desktop/pokedex.py`
 - `data/pokedex.json`
 - `firmware/projects/pokedex-c/pokedex-c.ino`
 
+Nota: algunos archivos conservan nombres viejos como `pokedex.json` o `pokedex-c`, pero el proyecto actual es solo el juego Simon Pokemon.
+
 ## Como correr el proyecto
 
-Primero instalar dependencias. No estan todas muy ordenadas pero con esto normalmente jala:
+Instala dependencias:
 
 ```powershell
-pip install pyserial numpy faster-whisper pyttsx3
+pip install pyserial faster-whisper
 ```
 
-Para correr el juego:
+Ejecuta el juego:
 
 ```powershell
 python simon_pokemon.py
 ```
 
-Para correr la pokedex:
+## Como funciona
 
-```powershell
-python pokedex.py
-```
-
-## Como funciona el simon
-
-1. Lee los pokemones del json.
-2. Escoge pokemones al azar.
-3. Los muestra en el display.
-4. Reproduce el audio si encuentra el wav.
-5. El jugador repite la secuencia por voz.
-6. Si se equivoca se acaba el juego.
+1. El juego carga los nombres y numeros de Pokemon desde `data/pokedex.json`.
+2. En cada ronda agrega un Pokemon aleatorio a la secuencia.
+3. La ESP32 muestra la secuencia en pantalla y reproduce el audio.
+4. El jugador repite la secuencia hablando al microfono.
+5. El programa transcribe la voz y valida el orden.
+6. Si hay un error, el juego termina y muestra el puntaje.
 
 ## Notas
 
-- el puerto serial se cambia directo en el codigo
-- ahorita el puerto que esta puesto es `COM11`
-- si no esta la ESP32 algunas cosas no van a funcionar igual
-- si no esta `faster-whisper` no va a servir la parte de voz
+- el puerto serial actual esta configurado como `COM11` en `app/desktop/simon_pokemon.py`
+- si no hay ESP32 conectada, no funcionaran igual el display, microfono y audio por serial
+- si falta `faster-whisper`, el reconocimiento por voz no estara disponible
 
-## Estructura medio rapida
+## Estructura rapida
 
 ```text
 pokemon-micropython/
 |-- app/
 |   `-- desktop/
-|       |-- pokedex.py
 |       `-- simon_pokemon.py
 |-- assets/
-|   `-- audio/
-|       `-- pokesounds/
+|   |-- audio/
+|   |   `-- pokesounds/
+|   `-- display/
 |-- data/
 |   `-- pokedex.json
 |-- firmware/
-|   `-- projects/
-|       `-- pokedex-c/
-|           `-- pokedex-c.ino
-|-- pokedex.py
+|   |-- projects/
+|   |   `-- pokedex-c/
+|   |       `-- pokedex-c.ino
+|   `-- releases/
 |-- simon_pokemon.py
 `-- README.md
 ```
 
-## Algunas cosas del firmware
+## Firmware
 
-- usa comandos por serial
-- muestra cosas en el display
-- reproduce audio
-- tambien puede grabar audio del microfono
+- recibe comandos por serial
+- muestra Pokemon y texto en el display
+- reproduce audio cargado desde la PC
+- puede grabar audio del microfono
 
-## Cosas pendientes o mejorables
+## Pendiente
 
 - mejorar reconocimiento de voz
-- mejorar tiempos del juego
-- hacer mejor la documentacion
-- limpiar codigo repetido
-- agregar mas pokemones si hace falta
+- ajustar tiempos y dificultad
+- limpiar nombres heredados del proyecto
+- mejorar la documentacion
