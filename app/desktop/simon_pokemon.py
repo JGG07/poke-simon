@@ -1346,8 +1346,6 @@ def jugar_simon_pokemon(
         notificar_fin_juego(ser)
         mostrar_mensaje_esp32(ser, "Perdiste", f"Puntos {puntaje}")
         print("\nFallaste.")
-        print(f"Tu respuesta: {', '.join(respuesta) if respuesta else '(vacia)'}")
-        print(f"Secuencia correcta: {', '.join(secuencia)}")
         print(f"Puntaje final: {puntaje}")
         liberar_display_esp32(ser)
         return True
