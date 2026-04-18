@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import re
 import sys
@@ -6,8 +7,26 @@ import tempfile
 import time
 import unicodedata
 import wave
+from array import array
+from collections import deque
 from difflib import SequenceMatcher
 from pathlib import Path
+
+from app.desktop.common_runtime import (
+    clear_display_esp32 as _clear_display_esp32,
+    debug_serial_message as _debug_serial_message,
+    load_whisper_model as _load_whisper_model,
+    open_serial_connection as _open_serial_connection,
+    read_serial_bytes as _read_serial_bytes,
+    read_serial_line as _read_serial_line,
+    read_serial_line_non_empty as _read_serial_line_non_empty,
+    send_command_esp32 as _send_command_esp32,
+    show_message_esp32 as _show_message_esp32,
+    show_pokemon_esp32 as _show_pokemon_esp32,
+    transcribe_wav_with_whisper as _transcribe_wav_with_whisper,
+    unlock_display_esp32 as _unlock_display_esp32,
+    wait_serial_response as _wait_serial_response,
+)
 
 try:
     import serial
@@ -20,9 +39,14 @@ except ImportError:
     WhisperModel = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-POKEDEX_FILE = PROJECT_ROOT / "data" / "pokedex.json"
-SOUNDS_DIR = PROJECT_ROOT / "assets" / "audio" / "pokesounds"
-SERIAL_PORT = "COM11"
+SIMON_LEARNED_SAMPLES_FILE = PROJECT_ROOT / "data" / "aprendizaje.json"
+GAME_HEROES = (
+    {"name": "Spider-Man", "display_id": "1"},
+    {"name": "Batman", "display_id": "2"},
+    {"name": "Superman", "display_id": "3"},
+    {"name": "Capitan America", "display_id": "4"},
+)
+SERIAL_PORT = "COM4"
 SERIAL_BAUDRATE = 921600
 SERIAL_TIMEOUT = 1
 SERIAL_ACK_TIMEOUT = 2.0
@@ -32,81 +56,87 @@ AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHUNK_SIZE = 256
 PCM_PLAYBACK_GAIN = 0.10
 MIC_TEST_DURATION_MS = 5000
+ESP32_MAX_RECORD_MS = 28000
 SERIAL_AUDIO_RESPONSE_TIMEOUT = 20.0
 SERIAL_AUDIO_CHUNK_DELAY = 0.003
 DEBUG_SERIAL = False
-VOICE_LANGUAGE = "en"
+VOICE_LANGUAGE = None
 VOICE_MODEL_SIZE = "base"
+VOICE_DEVICE = "cpu"
+VOICE_COMPUTE_TYPE = "int8"
 VOICE_TIMEOUT_BASE_MS = 3500
 VOICE_TIMEOUT_PER_POKEMON_MS = 2200
 VOICE_READY_DELAY_SECONDS = 0.9
 VOICE_MAX_ATTEMPTS = 2
+VOICE_MAX_CAPTURE_RETRIES = 4
 VOICE_FUZZY_MIN_SCORE = 0.72
+STREAM_CHUNK_TIMEOUT_SECONDS = 2.5
+STREAM_SPEECH_THRESHOLD = 180
+STREAM_MIN_SPEECH_MS = 300
+STREAM_INITIAL_SILENCE_MS = 250
+STREAM_END_SILENCE_MS = 700
+STREAM_END_SILENCE_FAST_MS = 450
+STREAM_FAST_CUTOFF_AFTER_SPEECH_MS = 900
+STREAM_PREROLL_CHUNKS = 12
+STREAM_MIN_FALLBACK_AUDIO_MS = 1200
+VOICE_INITIAL_PROMPT = (
+    "Spider-Man, Batman, Superman, Capitan America, Captain America, "
+    "Hombre Arana, Batman, Superman, Capitan America."
+)
+VOICE_HOTWORDS = (
+    "Spider-Man, Spiderman, Hombre Arana, Batman, Superman, "
+    "Capitan America, Captain America"
+)
 VOICE_FRAGMENT_SEPARATORS = r"(?:,| y | e | luego | despues | despues de | seguido de | entonces )"
+EXIT_COMMANDS = ("salir", "regresar", "volver", "menu", "menú")
 
 
 def abrir_esp32():
     """Abre la conexion serial con el ESP32 si pyserial esta disponible."""
-    if serial is None:
-        print("Aviso: pyserial no esta disponible. Se usaran solo sonidos locales.")
-        return None
-
-    try:
-        ser = serial.Serial(SERIAL_PORT, SERIAL_BAUDRATE, timeout=SERIAL_TIMEOUT)
-        time.sleep(2)
-        ser.reset_input_buffer()
-        ser.reset_output_buffer()
-        print(f"ESP32 conectado en {SERIAL_PORT} a {SERIAL_BAUDRATE} baudios.")
-        return ser
-    except Exception as error:
-        print(f"No se pudo abrir el puerto serial del ESP32: {error}")
-        return None
+    return _open_serial_connection(
+        serial,
+        SERIAL_PORT,
+        SERIAL_BAUDRATE,
+        SERIAL_TIMEOUT,
+        unavailable_message="Aviso: pyserial no esta disponible. Se usaran solo sonidos locales.",
+        connected_message="ESP32 conectado en {port} a {baudrate} baudios.",
+        open_error_message="No se pudo abrir el puerto serial del ESP32: {error}",
+    )
 
 
 def imprimir_debug_serial(mensaje: str) -> None:
     """Imprime mensajes seriales solo cuando la depuracion esta habilitada."""
-    if DEBUG_SERIAL:
-        print(mensaje)
+    _debug_serial_message(DEBUG_SERIAL, mensaje)
 
 
 def enviar_comando_esp32(ser, comando: str) -> bool:
     """Envia un comando de una linea al ESP32 y valida el ACK esperado."""
-    if ser is None:
-        return False
-
-    comando_limpio = comando.strip().upper()
-    ack_esperado = f"ACK:{comando_limpio.split()[0]}"
-    limite = time.time() + SERIAL_ACK_TIMEOUT
-
-    try:
-        ser.write((comando.strip() + "\n").encode("utf-8"))
-        ser.flush()
-
-        while time.time() < limite:
-            respuesta = ser.readline().decode("utf-8", errors="ignore").strip()
-            if not respuesta:
-                continue
-
-            imprimir_debug_serial(f"[ESP32] {respuesta}")
-            if respuesta == ack_esperado:
-                return True
-
-            if respuesta.startswith("UNKNOWN:"):
-                print(f"Aviso: el ESP32 no reconocio el comando '{comando}'.")
-                return False
-
-        print(f"Aviso: no se recibio {ack_esperado} desde el ESP32.")
-        return False
-    except Exception as error:
-        print(f"Error enviando comando al ESP32: {error}")
-        return False
+    return _send_command_esp32(ser, comando, SERIAL_ACK_TIMEOUT, DEBUG_SERIAL)
 
 
 def normalizar_texto(texto: str) -> str:
     """Normaliza texto para comparar sin acentos, mayusculas ni espacios extra."""
     texto = unicodedata.normalize("NFD", texto.strip().lower())
     texto = "".join(char for char in texto if unicodedata.category(char) != "Mn")
+    texto = texto.replace("'", "")
+    texto = re.sub(r"[^a-z0-9\s()]", " ", texto)
     return " ".join(texto.split())
+
+
+def es_comando_salida(texto: str) -> bool:
+    texto_normalizado = normalizar_texto(texto)
+    if not texto_normalizado:
+        return False
+
+    tokens = texto_normalizado.split()
+    if any(comando in tokens or comando in texto_normalizado for comando in EXIT_COMMANDS):
+        return True
+
+    variantes_salida = ("salida", "salido", "salgo", "terminar", "cerrar")
+    return any(variante in tokens or variante in texto_normalizado for variante in variantes_salida)
+
+
+MAX_LEARNED_VARIANTS_PER_POKEMON = 24
 
 
 def normalizar_nombre_archivo(nombre: str) -> str:
@@ -120,8 +150,70 @@ def normalizar_nombre_archivo(nombre: str) -> str:
     return nombre_normalizado
 
 
+def generar_variantes_foneticas(texto: str) -> list[str]:
+    texto_normalizado = normalizar_texto(texto)
+    if not texto_normalizado:
+        return []
+
+    variantes = [texto_normalizado]
+
+    def agregar(variante: str) -> None:
+        variante_normalizada = normalizar_texto(variante)
+        if variante_normalizada and variante_normalizada not in variantes:
+            variantes.append(variante_normalizada)
+
+    agregar(texto_normalizado.replace("w", "u"))
+    agregar(texto_normalizado.replace("v", "b"))
+    agregar(texto_normalizado.replace("qu", "cu"))
+    agregar(texto_normalizado.replace("k", "c"))
+    agregar(texto_normalizado.replace("sh", "ch"))
+    agregar(texto_normalizado.replace("ch", "sh"))
+    agregar(texto_normalizado.replace("ee", "i"))
+    agregar(texto_normalizado.replace("oo", "u"))
+
+    if "squirt" in texto_normalizado or "cuirt" in texto_normalizado:
+        agregar("squirtle")
+        agregar("squirtel")
+        agregar("quarter")
+        agregar("cuarter")
+        agregar("cuarto")
+
+    if "quarter" in texto_normalizado or "cuarter" in texto_normalizado:
+        agregar("cuarto")
+        agregar("squirtle")
+        agregar("squirtel")
+
+    if "spider" in texto_normalizado or "ara" in texto_normalizado:
+        agregar("spiderman")
+        agregar("spider man")
+        agregar("hombre arana")
+
+    if "bat" in texto_normalizado:
+        agregar("batman")
+        agregar("bat man")
+
+    if "super" in texto_normalizado:
+        agregar("superman")
+        agregar("super man")
+
+    if "capitan" in texto_normalizado or "captain" in texto_normalizado or "america" in texto_normalizado:
+        agregar("capitan america")
+        agregar("captain america")
+        agregar("capitan")
+
+    return variantes
+
+
+def cargar_nombres_juego() -> list[str]:
+    return [hero["name"] for hero in GAME_HEROES]
+
+
+def cargar_id_por_nombre() -> dict[str, str]:
+    return {hero["name"]: hero["display_id"] for hero in GAME_HEROES}
+
+
 def construir_variantes_basicas(nombre: str) -> list[str]:
-    """Hace algunas variantes simples del nombre para ayudar a reconocerlo."""
+    """Genera variantes basicas; los aliases manuales viven en aprendizaje.json."""
     normalizado = normalizar_texto(nombre)
     variantes = [normalizado]
 
@@ -129,83 +221,11 @@ def construir_variantes_basicas(nombre: str) -> list[str]:
     if junto != normalizado:
         variantes.append(junto)
 
-    if nombre == "Bulbasaur":
-        variantes.extend([
-            "bulba saur",
-            "bulbasor",
-            "bulbasar",
-            "bulbasaur",
-            "bulbasor",
-            "bulba",
-            "bulbazor",
-            "bulbasaur",
-            "bulbasor",
-            "bulbasaurr",
-            "bulba sor",
-            "bulba sur",
-            "bulba saur",
-            "bulbasorh",
-            "bulvasor",
-        ])
-    elif nombre == "Charmander":
-        variantes.extend([
-            "char mander",
-            "charmandar",
-            "charmender",
-            "charmander",
-            "charmander",
-            "charmanter",
-            "charman der",
-            "charmander",
-            "charmander",
-            "charmandar",
-            "charmanderh",
-            "charmandel",
-            "sharmander",
-            "charmanter",
-            "charman der",
-        ])
-    elif nombre == "Squirtle":
-        variantes.extend([
-            "squirtel",
-            "squirtul",
-            "esquirtle",
-            "squirtle",
-            "escuirtle",
-            "squirtol",
-            "squir tle",
-            "escuirtel",
-            "escuirtul",
-            "escuirtol",
-            "esquirtel",
-            "esquirtul",
-            "escuirtle",
-            "skuirtle",
-            "skuirtel",
-            "squirtleh",
-        ])
-    elif nombre == "Pikachu":
-        variantes.extend([
-            "pikachu",
-            "pikacho",
-            "pikatchu",
-            "pika chu",
-            "pikachuu",
-            "picachu",
-            "picacho",
-            "pika",
-            "pikashu",
-            "pikasho",
-            "picashu",
-            "picasho",
-            "pikachuu",
-            "pikachuh",
-            "picachu",
-            "pica chu",
-            "pika chuu",
-        ])
+    enriquecidas: list[str] = []
+    for variante in variantes:
+        enriquecidas.extend(generar_variantes_foneticas(variante))
 
-    return list(dict.fromkeys(variantes))
+    return list(dict.fromkeys(enriquecidas))
 
 
 def cargar_nombres_pokemon(ruta: Path) -> list[str]:
@@ -273,25 +293,145 @@ def cargar_num_por_nombre(ruta: Path) -> dict[str, str]:
     return mapa
 
 
-def construir_aliases_pokemon(nombres: list[str]) -> dict[tuple[str, ...], str]:
+def cargar_muestras_aprendidas(ruta: Path) -> list[dict[str, str]]:
+    if not ruta.exists():
+        return []
+
+    try:
+        with ruta.open("r", encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(datos, list):
+        return []
+
+    muestras: list[dict[str, str]] = []
+    permitidos = {normalizar_texto(hero["name"]) for hero in GAME_HEROES}
+    for item in datos:
+        if not isinstance(item, dict):
+            continue
+        texto = item.get("text")
+        etiqueta = item.get("label")
+        if not isinstance(texto, str) or not isinstance(etiqueta, str):
+            continue
+
+        texto_normalizado = normalizar_texto(texto)
+        etiqueta_normalizada = normalizar_texto(etiqueta)
+        if texto_normalizado and etiqueta_normalizada in permitidos:
+            muestras.append({"text": texto_normalizado, "label": etiqueta_normalizada})
+
+    return muestras
+
+
+def cargar_muestras_aprendidas_crudas(ruta: Path) -> list[dict[str, str]]:
+    if not ruta.exists():
+        return []
+
+    try:
+        with ruta.open("r", encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(datos, list):
+        return []
+
+    muestras: list[dict[str, str]] = []
+    for item in datos:
+        if not isinstance(item, dict):
+            continue
+        texto = item.get("text")
+        etiqueta = item.get("label")
+        if not isinstance(texto, str) or not isinstance(etiqueta, str):
+            continue
+        texto_normalizado = normalizar_texto(texto)
+        etiqueta_normalizada = normalizar_texto(etiqueta)
+        if texto_normalizado and etiqueta_normalizada:
+            muestras.append({"text": texto_normalizado, "label": etiqueta_normalizada})
+    return muestras
+
+
+def guardar_muestras_aprendidas(ruta: Path, muestras: list[dict[str, str]]) -> None:
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    etiquetas_juego = {normalizar_texto(hero["name"]) for hero in GAME_HEROES}
+    muestras_existentes = cargar_muestras_aprendidas_crudas(ruta)
+    muestras_no_juego = [
+        muestra
+        for muestra in muestras_existentes
+        if muestra["label"] not in etiquetas_juego
+    ]
+    muestras_finales = muestras_no_juego + muestras
+
+    ruta_temporal = ruta.with_suffix(f"{ruta.suffix}.tmp")
+    with ruta_temporal.open("w", encoding="utf-8") as archivo:
+        json.dump(muestras_finales, archivo, ensure_ascii=False, indent=2)
+        archivo.flush()
+        os.fsync(archivo.fileno())
+    ruta_temporal.replace(ruta)
+
+
+def construir_aliases_pokemon(
+    nombres: list[str],
+    muestras_aprendidas: list[dict[str, str]] | None = None,
+) -> dict[tuple[str, ...], str]:
     """Construye aliases normalizados para detectar nombres dentro de una transcripcion."""
     aliases: dict[tuple[str, ...], str] = {}
+    max_tokens_por_nombre: dict[str, int] = {}
 
     for nombre in nombres:
+        max_tokens = 1
         for variante in construir_variantes_basicas(nombre):
             tokens = tuple(token for token in re.split(r"[^a-z0-9]+", variante) if token)
             if tokens:
                 aliases[tokens] = nombre
+                max_tokens = max(max_tokens, len(tokens))
+        max_tokens_por_nombre[nombre] = max_tokens
+
+    nombre_por_normalizado = {normalizar_texto(nombre): nombre for nombre in nombres}
+    for muestra in muestras_aprendidas or []:
+        nombre_real = nombre_por_normalizado.get(muestra["label"])
+        if nombre_real is None:
+            continue
+        for variante in generar_variantes_foneticas(muestra["text"]):
+            tokens = tuple(token for token in re.split(r"[^a-z0-9]+", variante) if token)
+            if (
+                tokens
+                and len(tokens) <= max_tokens_por_nombre.get(nombre_real, 1)
+                and not (len(tokens) > 1 and len(set(tokens)) == 1)
+            ):
+                aliases[tokens] = nombre_real
 
     return aliases
 
 
-def construir_catalogo_pokemon(nombres: list[str]) -> list[tuple[str, str]]:
+def construir_catalogo_pokemon(
+    nombres: list[str],
+    muestras_aprendidas: list[dict[str, str]] | None = None,
+) -> list[tuple[str, str]]:
     """Crea una lista de nombres normalizados para matching difuso."""
     catalogo = []
+    max_tokens_por_nombre: dict[str, int] = {}
     for nombre in nombres:
+        max_tokens = 1
         for variante in construir_variantes_basicas(nombre):
-            catalogo.append((normalizar_texto(variante), nombre))
+            variante_normalizada = normalizar_texto(variante)
+            catalogo.append((variante_normalizada, nombre))
+            max_tokens = max(max_tokens, len([t for t in re.split(r"[^a-z0-9]+", variante_normalizada) if t]))
+        max_tokens_por_nombre[nombre] = max_tokens
+
+    nombre_por_normalizado = {normalizar_texto(nombre): nombre for nombre in nombres}
+    for muestra in muestras_aprendidas or []:
+        nombre_real = nombre_por_normalizado.get(muestra["label"])
+        if nombre_real is not None:
+            for variante in generar_variantes_foneticas(muestra["text"]):
+                tokens = [t for t in re.split(r"[^a-z0-9]+", variante) if t]
+                if (
+                    tokens
+                    and len(tokens) <= max_tokens_por_nombre.get(nombre_real, 1)
+                    and not (len(tokens) > 1 and len(set(tokens)) == 1)
+                ):
+                    catalogo.append((variante, nombre_real))
     return catalogo
 
 
@@ -309,32 +449,27 @@ def probar_esp32(ser) -> bool:
     return enviar_comando_esp32(ser, "TEST")
 
 
-def mostrar_pokemon_en_esp32(ser, numero_pokemon: str | None) -> bool:
-    """Manda a la ESP32 el numero del Pokemon para mostrarlo en el display."""
-    if ser is None or not numero_pokemon:
+def mostrar_personaje_en_esp32(ser, personaje_id: str | None) -> bool:
+    """Manda a la ESP32 el identificador del heroe para mostrarlo en el display."""
+    if ser is None or not personaje_id:
         return False
 
-    return enviar_comando_esp32(ser, f"SHOW {numero_pokemon}")
+    return enviar_comando_esp32(ser, f"HERO {personaje_id}")
 
 
 def limpiar_display_esp32(ser) -> bool:
     """Limpia temporalmente el display de la ESP32."""
-    return enviar_comando_esp32(ser, "CLEAR")
+    return _clear_display_esp32(ser, SERIAL_ACK_TIMEOUT, DEBUG_SERIAL)
 
 
 def liberar_display_esp32(ser) -> bool:
     """Libera el display para que vuelva a su comportamiento normal."""
-    return enviar_comando_esp32(ser, "UNLOCK")
+    return _unlock_display_esp32(ser, SERIAL_ACK_TIMEOUT, DEBUG_SERIAL)
 
 
 def mostrar_mensaje_esp32(ser, linea1: str, linea2: str = "") -> bool:
     """Muestra un mensaje corto en el display de la ESP32."""
-    if ser is None:
-        return False
-
-    texto1 = linea1.strip().replace("|", " ")[:16]
-    texto2 = linea2.strip().replace("|", " ")[:16]
-    return enviar_comando_esp32(ser, f"TEXT {texto1}|{texto2}")
+    return _show_message_esp32(ser, SERIAL_ACK_TIMEOUT, DEBUG_SERIAL, linea1, linea2)
 
 
 def buscar_audio_pokemon(nombre: str, sounds_dir: Path) -> Path | None:
@@ -410,62 +545,22 @@ def wav_a_pcm16_mono_16k(path: Path) -> bytes:
 
 def leer_linea_serial(ser, timeout: float) -> str:
     """Lee una linea terminada en salto de linea desde el puerto serial."""
-    if ser is None:
-        return ""
-
-    timeout_original = ser.timeout
-    try:
-        ser.timeout = timeout
-        return ser.readline().decode("utf-8", errors="ignore").strip()
-    finally:
-        ser.timeout = timeout_original
+    return _read_serial_line(ser, timeout)
 
 
 def leer_linea_serial_no_vacia(ser, timeout: float) -> str:
     """Lee la siguiente linea no vacia desde el puerto serial."""
-    limite = time.time() + timeout
-
-    while time.time() < limite:
-        restante = max(0.1, limite - time.time())
-        linea = leer_linea_serial(ser, timeout=restante)
-        if linea:
-            return linea
-
-    return ""
+    return _read_serial_line_non_empty(ser, timeout)
 
 
 def leer_bytes_serial(ser, total_bytes: int, timeout: float) -> bytes:
     """Lee una cantidad exacta de bytes desde el puerto serial."""
-    if ser is None or total_bytes <= 0:
-        return b""
-
-    limite = time.time() + timeout
-    recibido = bytearray()
-
-    while len(recibido) < total_bytes and time.time() < limite:
-        chunk = ser.read(min(AUDIO_CHUNK_SIZE, total_bytes - len(recibido)))
-        if not chunk:
-            continue
-        recibido.extend(chunk)
-
-    return bytes(recibido)
+    return _read_serial_bytes(ser, total_bytes, AUDIO_CHUNK_SIZE, timeout)
 
 
 def esperar_respuesta_esp32(ser, esperadas: set[str], timeout: float) -> str:
     """Espera una respuesta de texto de la ESP32 e imprime lineas relevantes."""
-    limite = time.time() + timeout
-
-    while time.time() < limite:
-        restante = max(0.1, limite - time.time())
-        linea = leer_linea_serial_no_vacia(ser, timeout=restante)
-        if not linea:
-            continue
-
-        imprimir_debug_serial(f"[ESP32] {linea}")
-        if linea in esperadas:
-            return linea
-
-    return ""
+    return _wait_serial_response(ser, esperadas, timeout, DEBUG_SERIAL)
 
 
 def guardar_pcm_como_wav(pcm: bytes, destino: Path, sample_rate: int = AUDIO_SAMPLE_RATE) -> Path:
@@ -496,12 +591,19 @@ def grabar_microfono_esp32(ser, duracion_ms: int = MIC_TEST_DURATION_MS) -> byte
         ser.write(f"!REC {duracion_ms}\n".encode("utf-8"))
         ser.flush()
 
-        cabecera = leer_linea_serial(ser, timeout=5.0)
-        if not cabecera.startswith("!AUDIO "):
-            if cabecera:
-                imprimir_debug_serial(f"[ESP32] {cabecera}")
-            else:
-                print("Aviso: la ESP32 no envio la cabecera de audio del microfono.")
+        cabecera = ""
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            linea = leer_linea_serial(ser, timeout=max(0.1, deadline - time.time()))
+            if not linea:
+                continue
+            if linea.startswith("!AUDIO "):
+                cabecera = linea
+                break
+            imprimir_debug_serial(f"[ESP32] Ignorando antes de audio: {linea}")
+
+        if not cabecera:
+            print("Aviso: la ESP32 no envio la cabecera de audio del microfono.")
             return b""
 
         try:
@@ -533,36 +635,202 @@ def grabar_microfono_esp32(ser, duracion_ms: int = MIC_TEST_DURATION_MS) -> byte
         return b""
 
 
-def cargar_transcriptor_voz():
-    """Carga el modelo de Whisper si faster-whisper esta disponible."""
-    if WhisperModel is None:
-        return None
+def nivel_audio_pcm(pcm: bytes) -> float:
+    """Calcula un nivel simple promedio de amplitud para deteccion de voz."""
+    if not pcm:
+        return 0.0
+
+    muestras = array("h")
+    muestras.frombytes(pcm)
+    if not muestras:
+        return 0.0
+
+    return sum(abs(muestra) for muestra in muestras) / len(muestras)
+
+
+def esperar_evento_stream_esp32(ser, esperadas: set[str], timeout: float) -> str:
+    """Espera eventos textuales del stream y descarta chunks intermedios si aparecen."""
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        linea = leer_linea_serial(ser, timeout=max(0.1, deadline - time.time()))
+        if not linea:
+            continue
+
+        if linea.startswith("!PCM "):
+            try:
+                total_bytes = int(linea.split()[1])
+            except (IndexError, ValueError):
+                continue
+            leer_bytes_serial(ser, total_bytes, timeout=STREAM_CHUNK_TIMEOUT_SECONDS)
+            continue
+
+        imprimir_debug_serial(f"[ESP32] {linea}")
+        if linea in esperadas:
+            return linea
+
+    return ""
+
+
+def iniciar_stream_microfono_esp32(ser) -> bool:
+    """Activa el modo de streaming continuo del microfono en la ESP32."""
+    if ser is None:
+        return False
 
     try:
-        print(f"Cargando modelo de voz '{VOICE_MODEL_SIZE}'...")
-        return WhisperModel(VOICE_MODEL_SIZE)
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        ser.write(b"!STREAMON\n")
+        ser.flush()
+        return esperar_evento_stream_esp32(ser, {"!STREAMING", "!ERROR"}, timeout=3.0) == "!STREAMING"
     except Exception as error:
-        print(f"Aviso: no se pudo cargar faster-whisper: {error}")
+        print(f"Error iniciando stream del microfono: {error}")
+        return False
+
+
+def detener_stream_microfono_esp32(ser) -> bool:
+    """Detiene el modo de streaming continuo del microfono en la ESP32."""
+    if ser is None:
+        return False
+
+    try:
+        ser.write(b"!STREAMOFF\n")
+        ser.flush()
+        return esperar_evento_stream_esp32(ser, {"!STOPPED", "!ERROR"}, timeout=3.0) == "!STOPPED"
+    except Exception as error:
+        print(f"Error deteniendo stream del microfono: {error}")
+        return False
+
+
+def leer_chunk_stream_microfono_esp32(ser, timeout: float = STREAM_CHUNK_TIMEOUT_SECONDS) -> bytes | None:
+    """Lee un chunk PCM del stream continuo del microfono."""
+    if ser is None:
         return None
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        linea = leer_linea_serial(ser, timeout=max(0.1, deadline - time.time()))
+        if not linea:
+            continue
+
+        if linea.startswith("!PCM "):
+            try:
+                total_bytes = int(linea.split()[1])
+            except (IndexError, ValueError):
+                continue
+
+            if total_bytes <= 0:
+                continue
+
+            chunk = leer_bytes_serial(ser, total_bytes, timeout=timeout)
+            if len(chunk) == total_bytes:
+                return chunk
+            return None
+
+        if linea in {"!STREAMING", "!STOPPED"}:
+            continue
+
+        imprimir_debug_serial(f"[ESP32] {linea}")
+
+    return None
+
+
+def capturar_fragmento_streaming_esp32(ser, duracion_ms: int) -> bytes:
+    """Captura un fragmento de voz desde el stream continuo usando deteccion simple de silencio."""
+    if ser is None or duracion_ms <= 0:
+        return b""
+
+    if not iniciar_stream_microfono_esp32(ser):
+        print("Aviso: no se pudo iniciar el stream del microfono en la ESP32.")
+        return b""
+
+    preroll: deque[bytes] = deque(maxlen=STREAM_PREROLL_CHUNKS)
+    pcm = bytearray()
+    audio_total_ms = 0.0
+    speech_started = False
+    escucha_armada = False
+    initial_silence_ms = 0.0
+    speech_ms = 0.0
+    silence_ms = 0.0
+    started_at = time.time()
+
+    try:
+        while (time.time() - started_at) * 1000 < duracion_ms:
+            chunk = leer_chunk_stream_microfono_esp32(ser)
+            if not chunk:
+                break
+
+            chunk_ms = (len(chunk) / 2 / AUDIO_SAMPLE_RATE) * 1000.0
+            audio_total_ms += chunk_ms
+            nivel = nivel_audio_pcm(chunk)
+
+            if not speech_started:
+                if not escucha_armada:
+                    if nivel < STREAM_SPEECH_THRESHOLD:
+                        initial_silence_ms += chunk_ms
+                        if initial_silence_ms >= STREAM_INITIAL_SILENCE_MS:
+                            escucha_armada = True
+                    else:
+                        initial_silence_ms = 0.0
+                    continue
+
+                preroll.append(chunk)
+                if nivel >= STREAM_SPEECH_THRESHOLD:
+                    speech_started = True
+                    for previo in preroll:
+                        pcm.extend(previo)
+                    preroll.clear()
+                    speech_ms += chunk_ms
+                continue
+
+            pcm.extend(chunk)
+            if nivel >= STREAM_SPEECH_THRESHOLD:
+                speech_ms += chunk_ms
+                silence_ms = 0.0
+            else:
+                silence_ms += chunk_ms
+                silencio_objetivo = STREAM_END_SILENCE_MS
+                if speech_ms >= STREAM_FAST_CUTOFF_AFTER_SPEECH_MS:
+                    silencio_objetivo = STREAM_END_SILENCE_FAST_MS
+                if speech_ms >= STREAM_MIN_SPEECH_MS and silence_ms >= silencio_objetivo:
+                    break
+    finally:
+        detener_stream_microfono_esp32(ser)
+
+    if speech_ms < STREAM_MIN_SPEECH_MS:
+        audio_respaldo = b"".join(preroll) + bytes(pcm)
+        if audio_total_ms >= STREAM_MIN_FALLBACK_AUDIO_MS and len(audio_respaldo) >= AUDIO_SAMPLE_RATE:
+            return audio_respaldo
+        return b""
+
+    return bytes(pcm)
+
+
+def cargar_transcriptor_voz():
+    """Carga el modelo de Whisper si faster-whisper esta disponible."""
+    return _load_whisper_model(
+        WhisperModel,
+        VOICE_MODEL_SIZE,
+        device=VOICE_DEVICE,
+        compute_type=VOICE_COMPUTE_TYPE,
+    )
 
 
 def transcribir_wav_con_whisper(transcriptor, audio_path: Path, language: str | None = None) -> str:
     """Transcribe un WAV con faster-whisper y devuelve el texto unido."""
-    if transcriptor is None:
-        return ""
-
-    try:
-        segmentos, _ = transcriptor.transcribe(
-            str(audio_path),
-            language=language or VOICE_LANGUAGE,
-            vad_filter=True,
-            beam_size=5,
-        )
-        partes = [segmento.text.strip() for segmento in segmentos if segmento.text.strip()]
-        return " ".join(partes).strip()
-    except Exception as error:
-        print(f"Aviso: no se pudo transcribir el audio: {error}")
-        return ""
+    return _transcribe_wav_with_whisper(
+        transcriptor,
+        audio_path,
+        language=VOICE_LANGUAGE if language is None else language,
+        vad_filter=True,
+        beam_size=5,
+        best_of=5,
+        temperature=0.0,
+        condition_on_previous_text=False,
+        initial_prompt=VOICE_INITIAL_PROMPT,
+        hotwords=VOICE_HOTWORDS,
+        without_timestamps=True,
+    )
 
 
 def similitud_texto(a: str, b: str) -> float:
@@ -578,10 +846,20 @@ def dividir_fragmentos_pokemon(texto: str) -> list[str]:
 
     candidatos = re.split(VOICE_FRAGMENT_SEPARATORS, texto_normalizado)
     fragmentos = []
+    palabras_ruido = {"its", "it", "is", "es", "the", "a", "an"}
     for candidato in candidatos:
-        limpio = " ".join(candidato.split())
-        if limpio:
-            fragmentos.append(limpio)
+        tokens = [token for token in candidato.split() if token and token not in palabras_ruido]
+        if not tokens:
+            continue
+
+        limpio = " ".join(tokens)
+        fragmentos.append(limpio)
+
+        for inicio in range(len(tokens)):
+            for longitud in range(1, min(3, len(tokens) - inicio) + 1):
+                fragmento = " ".join(tokens[inicio:inicio + longitud])
+                if fragmento not in fragmentos:
+                    fragmentos.append(fragmento)
     return fragmentos
 
 
@@ -589,20 +867,20 @@ def buscar_mejor_pokemon(fragmento: str, catalogo_pokemon: list[tuple[str, str]]
     """Busca el nombre de Pokemon mas cercano para un fragmento libre."""
     mejor_nombre = None
     mejor_puntaje = 0.0
-    fragmento_normalizado = normalizar_texto(fragmento)
-
-    if not fragmento_normalizado:
+    variantes_fragmento = generar_variantes_foneticas(fragmento)
+    if not variantes_fragmento:
         return None, 0.0
 
-    for nombre_normalizado, nombre_real in catalogo_pokemon:
-        puntaje = similitud_texto(fragmento_normalizado, nombre_normalizado)
+    for fragmento_normalizado in variantes_fragmento:
+        for nombre_normalizado, nombre_real in catalogo_pokemon:
+            puntaje = similitud_texto(fragmento_normalizado, nombre_normalizado)
 
-        if fragmento_normalizado in nombre_normalizado or nombre_normalizado in fragmento_normalizado:
-            puntaje += 0.12
+            if fragmento_normalizado in nombre_normalizado or nombre_normalizado in fragmento_normalizado:
+                puntaje += 0.12
 
-        if puntaje > mejor_puntaje:
-            mejor_puntaje = puntaje
-            mejor_nombre = nombre_real
+            if puntaje > mejor_puntaje:
+                mejor_puntaje = puntaje
+                mejor_nombre = nombre_real
 
     return mejor_nombre, min(mejor_puntaje, 1.0)
 
@@ -694,19 +972,20 @@ def escuchar_respuesta_por_voz(
     aliases_pokemon: dict[tuple[str, ...], str],
     catalogo_pokemon: list[tuple[str, str]],
     longitud_esperada: int,
-) -> tuple[list[str], str]:
-    """Graba voz desde la ESP32, la transcribe y extrae la secuencia de Pokemon pronunciada."""
+) -> tuple[list[str], str, bool]:
+    """Graba voz desde la ESP32, la transcribe y extrae la secuencia de heroes pronunciada."""
     if ser is None or transcriptor is None:
-        return [], ""
+        return [], "", False
 
     duracion_ms = VOICE_TIMEOUT_BASE_MS + (max(1, longitud_esperada) * VOICE_TIMEOUT_PER_POKEMON_MS)
+    duracion_ms = min(duracion_ms, ESP32_MAX_RECORD_MS)
     mostrar_mensaje_esp32(ser, "Tu turno", "Habla ahora")
     print(f"Habla ahora. Tienes aproximadamente {duracion_ms / 1000:.1f} segundos...")
     time.sleep(VOICE_READY_DELAY_SECONDS)
 
-    pcm = grabar_microfono_esp32(ser, duracion_ms=duracion_ms)
+    pcm = capturar_fragmento_streaming_esp32(ser, duracion_ms=duracion_ms)
     if not pcm:
-        return [], ""
+        return [], "", False
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
         audio_path = Path(temp_file.name)
@@ -732,7 +1011,7 @@ def escuchar_respuesta_por_voz(
         aliases_pokemon=aliases_pokemon,
         catalogo_pokemon=catalogo_pokemon,
         longitud_esperada=longitud_esperada,
-    ), texto
+    ), texto, True
 
 
 def enviar_pcm_a_esp32(ser, pcm: bytes, descripcion: str = "audio PCM") -> bool:
@@ -824,14 +1103,12 @@ def reproducir_audio_pokemon(nombre: str, sounds_dir: Path, ser=None) -> bool:
 
 def mostrar_secuencia_en_display(
     secuencia: list[str],
-    num_por_nombre: dict[str, str],
-    sounds_dir: Path,
+    id_por_nombre: dict[str, str],
     ser=None,
 ) -> None:
-    """Muestra la secuencia de Pokemon en el display y prueba el cry en ESP32."""
+    """Muestra la secuencia de heroes en el display."""
     for nombre in secuencia:
-        mostrar_pokemon_en_esp32(ser, num_por_nombre.get(nombre))
-        reproducir_audio_pokemon(nombre, sounds_dir, ser=ser)
+        mostrar_personaje_en_esp32(ser, id_por_nombre.get(nombre))
         time.sleep(DISPLAY_SHOW_SECONDS)
         limpiar_display_esp32(ser)
         time.sleep(DISPLAY_GAP_SECONDS)
@@ -844,19 +1121,25 @@ def leer_respuesta_jugador(
     aliases_pokemon: dict[tuple[str, ...], str],
     catalogo_pokemon: list[tuple[str, str]],
     modo_voz: bool,
-) -> tuple[list[str], str]:
-    """Obtiene la respuesta del jugador, con una segunda oportunidad por voz."""
+) -> tuple[list[str], str, bool]:
+    """Obtiene la respuesta del jugador, separando fallos de captura de fallos de reconocimiento."""
     if not modo_voz or ser is None or transcriptor is None:
         print("Aviso: no hay reconocimiento por voz disponible.")
-        return [], ""
+        return [], "", False
 
     ultimo_texto = ""
-    for intento in range(VOICE_MAX_ATTEMPTS):
-        if intento == 1:
+    intentos_entendimiento = 0
+    reintentos_captura = 0
+
+    while intentos_entendimiento < VOICE_MAX_ATTEMPTS and reintentos_captura < VOICE_MAX_CAPTURE_RETRIES:
+        if intentos_entendimiento > 0:
             mostrar_mensaje_esp32(ser, "Repitelo", "una vez mas")
             print("No te entendi bien. Intentalo una vez mas.")
+        elif reintentos_captura > 0:
+            mostrar_mensaje_esp32(ser, "No te oi", "Habla otra vez")
+            print("No alcance a captar tu voz. Vamos otra vez.")
 
-        respuesta, texto = escuchar_respuesta_por_voz(
+        respuesta, texto, captura_valida = escuchar_respuesta_por_voz(
             ser,
             transcriptor=transcriptor,
             aliases_pokemon=aliases_pokemon,
@@ -864,12 +1147,19 @@ def leer_respuesta_jugador(
             longitud_esperada=len(secuencia),
         )
         ultimo_texto = texto
+        if es_comando_salida(texto):
+            return [], texto, True
+        if not captura_valida:
+            reintentos_captura += 1
+            time.sleep(0.25)
+            continue
         if respuesta:
-            return respuesta, texto
+            return respuesta, texto, False
+        intentos_entendimiento += 1
 
     print("No pude entender la secuencia por voz.")
     mostrar_mensaje_esp32(ser, "No entendi", "Fin del juego")
-    return [], ultimo_texto
+    return [], ultimo_texto, False
 
 
 def secuencias_iguales(secuencia_correcta: list[str], respuesta_usuario: list[str]) -> bool:
@@ -880,6 +1170,44 @@ def secuencias_iguales(secuencia_correcta: list[str], respuesta_usuario: list[st
     correcta_normalizada = [normalizar_texto(nombre) for nombre in secuencia_correcta]
     respuesta_normalizada = [normalizar_texto(nombre) for nombre in respuesta_usuario]
     return correcta_normalizada == respuesta_normalizada
+
+
+def aprender_desde_ronda_correcta(
+    texto_detectado: str,
+    secuencia_correcta: list[str],
+    respuesta_usuario: list[str],
+    muestras_aprendidas: list[dict[str, str]],
+) -> bool:
+    if not texto_detectado or not secuencias_iguales(secuencia_correcta, respuesta_usuario):
+        return False
+
+    fragmentos = dividir_fragmentos_pokemon(texto_detectado)
+    if len(fragmentos) != len(secuencia_correcta):
+        return False
+
+    conteo_por_label: dict[str, int] = {}
+    for muestra in muestras_aprendidas:
+        conteo_por_label[muestra["label"]] = conteo_por_label.get(muestra["label"], 0) + 1
+
+    agregado = False
+    for fragmento, nombre_real in zip(fragmentos, secuencia_correcta):
+        texto_normalizado = normalizar_texto(fragmento)
+        label = normalizar_texto(nombre_real)
+        if not texto_normalizado or texto_normalizado == label:
+            continue
+        if any(
+            muestra["text"] == texto_normalizado and muestra["label"] == label
+            for muestra in muestras_aprendidas
+        ):
+            continue
+        if conteo_por_label.get(label, 0) >= MAX_LEARNED_VARIANTS_PER_POKEMON:
+            continue
+
+        muestras_aprendidas.append({"text": texto_normalizado, "label": label})
+        conteo_por_label[label] = conteo_por_label.get(label, 0) + 1
+        agregado = True
+
+    return agregado
 
 
 def reproducir_sonido_exito() -> None:
@@ -962,10 +1290,10 @@ def notificar_fin_juego(ser) -> None:
 
 def jugar_simon_pokemon(
     nombres: list[str],
-    num_por_nombre: dict[str, str],
-    sounds_dir: Path,
+    id_por_nombre: dict[str, str],
     aliases_pokemon: dict[tuple[str, ...], str],
     catalogo_pokemon: list[tuple[str, str]],
+    muestras_aprendidas: list[dict[str, str]],
     ser=None,
     transcriptor=None,
     modo_voz: bool = False,
@@ -974,14 +1302,15 @@ def jugar_simon_pokemon(
     secuencia = []
     puntaje = 0
 
-    print("Bienvenido a Simon Pokemon.")
+    print("Bienvenido a Simon Superheroes.")
     if modo_voz and ser is not None and transcriptor is not None:
-        print("Mira la secuencia en el display y luego repitela hablando al microfono.")
+        print("Mira la secuencia de heroes en el display y luego repitela hablando al microfono.")
+        print("El juego escuchara desde el microfono de la ESP32.")
     else:
         print("Aviso: no hay reconocimiento por voz disponible en este momento.")
     print("El juego termina cuando falles.\n")
     notificar_inicio_juego(ser)
-    mostrar_mensaje_esp32(ser, "Simon Pokemon", "Preparate")
+    mostrar_mensaje_esp32(ser, "Superheroes", "Preparate")
 
     while True:
         nuevo_pokemon = obtener_siguiente_pokemon(nombres)
@@ -991,9 +1320,9 @@ def jugar_simon_pokemon(
         notificar_inicio_ronda(ser)
         mostrar_mensaje_esp32(ser, f"Ronda {len(secuencia)}", "Memoriza")
         print("Observa la secuencia en el display...")
-        mostrar_secuencia_en_display(secuencia, num_por_nombre, sounds_dir, ser=ser)
+        mostrar_secuencia_en_display(secuencia, id_por_nombre, ser=ser)
 
-        respuesta, texto_detectado = leer_respuesta_jugador(
+        respuesta, texto_detectado, salir_al_menu = leer_respuesta_jugador(
             secuencia,
             ser=ser,
             transcriptor=transcriptor,
@@ -1001,10 +1330,27 @@ def jugar_simon_pokemon(
             catalogo_pokemon=catalogo_pokemon,
             modo_voz=modo_voz,
         )
+        if salir_al_menu:
+            mostrar_mensaje_esp32(ser, "Volviendo", "al menu")
+            print("\nRegresando al menu principal...")
+            liberar_display_esp32(ser)
+            return False
+
         if texto_detectado:
-            print(f"Pokemon detectados: {', '.join(respuesta) if respuesta else '(ninguno)'}")
+            print(f"Heroes detectados: {', '.join(respuesta) if respuesta else '(ninguno)'}")
 
         if secuencias_iguales(secuencia, respuesta):
+            if aprender_desde_ronda_correcta(
+                texto_detectado,
+                secuencia,
+                respuesta,
+                muestras_aprendidas,
+            ):
+                guardar_muestras_aprendidas(SIMON_LEARNED_SAMPLES_FILE, muestras_aprendidas)
+                aliases_pokemon = construir_aliases_pokemon(nombres, muestras_aprendidas)
+                catalogo_pokemon = construir_catalogo_pokemon(nombres, muestras_aprendidas)
+                print("El juego aprendio una nueva variante de voz.")
+
             puntaje += 1
             notificar_acierto(ser)
             mostrar_mensaje_esp32(ser, "Correcto", f"Puntos {puntaje}")
@@ -1030,17 +1376,13 @@ def mostrar_menu_principal() -> str:
     return input("Selecciona una opcion: ").strip()
 
 
-def main() -> None:
-    """Carga datos y arranca el juego."""
-    try:
-        nombres = cargar_nombres_pokemon(POKEDEX_FILE)
-        num_por_nombre = cargar_num_por_nombre(POKEDEX_FILE)
-    except (FileNotFoundError, ValueError) as error:
-        print(f"Error: {error}")
-        sys.exit(1)
-
-    aliases_pokemon = construir_aliases_pokemon(nombres)
-    catalogo_pokemon = construir_catalogo_pokemon(nombres)
+def ejecutar_juego(mostrar_menu: bool = True) -> None:
+    """Carga datos y arranca el juego, con o sin menu interno."""
+    nombres = cargar_nombres_juego()
+    id_por_nombre = cargar_id_por_nombre()
+    muestras_aprendidas = cargar_muestras_aprendidas(SIMON_LEARNED_SAMPLES_FILE)
+    aliases_pokemon = construir_aliases_pokemon(nombres, muestras_aprendidas)
+    catalogo_pokemon = construir_catalogo_pokemon(nombres, muestras_aprendidas)
     ser = abrir_esp32()
     transcriptor = cargar_transcriptor_voz()
     modo_voz = ser is not None and transcriptor is not None
@@ -1050,6 +1392,19 @@ def main() -> None:
 
     try:
         probar_esp32(ser)
+        if not mostrar_menu:
+            jugar_simon_pokemon(
+                nombres,
+                id_por_nombre=id_por_nombre,
+                aliases_pokemon=aliases_pokemon,
+                catalogo_pokemon=catalogo_pokemon,
+                muestras_aprendidas=muestras_aprendidas,
+                ser=ser,
+                transcriptor=transcriptor,
+                modo_voz=modo_voz,
+            )
+            return
+
         while True:
             opcion = mostrar_menu_principal()
             if opcion == "0":
@@ -1060,10 +1415,10 @@ def main() -> None:
 
             jugar_simon_pokemon(
                 nombres,
-                num_por_nombre=num_por_nombre,
-                sounds_dir=SOUNDS_DIR,
+                id_por_nombre=id_por_nombre,
                 aliases_pokemon=aliases_pokemon,
                 catalogo_pokemon=catalogo_pokemon,
+                muestras_aprendidas=muestras_aprendidas,
                 ser=ser,
                 transcriptor=transcriptor,
                 modo_voz=modo_voz,
@@ -1071,6 +1426,11 @@ def main() -> None:
     finally:
         if ser is not None:
             ser.close()
+
+
+def main() -> None:
+    """Mantiene el comportamiento original del script del juego."""
+    ejecutar_juego(mostrar_menu=True)
 
 
 if __name__ == "__main__":

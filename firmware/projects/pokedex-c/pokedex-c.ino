@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "DisplayManager.h"
+#include "HeroLogos.h"
 #include "SpriteRenderer.h"
 #include "StartupLogo.h"
 
@@ -14,10 +15,13 @@ const unsigned long changeInterval = 1000;
 bool displayLocked = false;
 bool displayBlank = false;
 bool statusMessageActive = false;
+bool heroModeActive = false;
 bool startupAnimationActive = true;
+bool microphoneStreamingActive = false;
 unsigned long startupAnimationStart = 0;
 String statusLine1;
 String statusLine2;
+int heroIndex = -1;
 
 #define SPK_PORT I2S_NUM_1
 #define SPK_BCLK 18
@@ -33,7 +37,7 @@ String statusLine2;
 #define BUFFER_FRAMES 256
 #define SERIAL_BAUDRATE 921600
 #define PCM_CHUNK_BYTES 1024
-#define MIC_MAX_RECORD_MS 10000
+#define MIC_MAX_RECORD_MS 28000
 #define TONE_AMPLITUDE 3400
 #define AUDIO_LOAD_TIMEOUT_MS 10000
 
@@ -52,6 +56,26 @@ void renderStatusMessage() {
 
     if (statusLine2.length() > 0) {
         displayManager.drawText(0, 36, statusLine2.c_str(), 1);
+    }
+
+    displayManager.render();
+}
+
+void renderHeroCard() {
+    displayManager.clear();
+
+    if (heroIndex == 0) {
+        displayManager.drawBitmap(2, -18, spider_man_logo_bitmap, SPIDER_MAN_LOGO_WIDTH, SPIDER_MAN_LOGO_HEIGHT);
+        displayManager.drawText(20, 54, "Spider-Man", 1);
+    } else if (heroIndex == 1) {
+        displayManager.drawText(18, 12, "BATMAN", 2);
+        displayManager.drawText(12, 40, "Heroe 2", 1);
+    } else if (heroIndex == 2) {
+        displayManager.drawText(8, 12, "SUPERMAN", 2);
+        displayManager.drawText(12, 40, "Heroe 3", 1);
+    } else if (heroIndex == 3) {
+        displayManager.drawBitmap(2, -6, capitan_america_logo_bitmap, CAPITAN_AMERICA_LOGO_WIDTH, CAPITAN_AMERICA_LOGO_HEIGHT);
+        displayManager.drawText(8, 56, "Cap. America", 1);
     }
 
     displayManager.render();
@@ -298,6 +322,29 @@ bool streamMicrophoneAudio(uint32_t durationMs) {
     return true;
 }
 
+bool streamMicrophoneChunk() {
+    int16_t pcmFrames[BUFFER_FRAMES];
+    const size_t bytesRequested = BUFFER_FRAMES * sizeof(int16_t);
+    size_t bytesRead = 0;
+
+    esp_err_t result = i2s_read(
+        MIC_PORT,
+        pcmFrames,
+        bytesRequested,
+        &bytesRead,
+        pdMS_TO_TICKS(250)
+    );
+
+    if (result != ESP_OK || bytesRead == 0) {
+        return false;
+    }
+
+    Serial.print("!PCM ");
+    Serial.println(bytesRead);
+    Serial.write((const uint8_t*)pcmFrames, bytesRead);
+    return true;
+}
+
 void processCommand(const String& rawCommand) {
     String command = rawCommand;
     command.trim();
@@ -317,6 +364,7 @@ void processCommand(const String& rawCommand) {
         statusLine1.trim();
         statusLine2.trim();
         statusMessageActive = true;
+        heroModeActive = false;
         startupAnimationActive = false;
         displayLocked = true;
         displayBlank = false;
@@ -332,11 +380,29 @@ void processCommand(const String& rawCommand) {
         if (pokedexNumber >= 1 && pokedexNumber <= 151) {
             pokemonIndex = pokedexNumber - 1;
             statusMessageActive = false;
+            heroModeActive = false;
             displayLocked = true;
             displayBlank = false;
             Serial.println("ACK:SHOW");
         } else {
             Serial.println("UNKNOWN:SHOW");
+        }
+        return;
+    }
+
+    if (command.startsWith("HERO ")) {
+        const String heroText = command.substring(5);
+        const int heroNumber = heroText.toInt();
+
+        if (heroNumber >= 1 && heroNumber <= 4) {
+            heroIndex = heroNumber - 1;
+            statusMessageActive = false;
+            heroModeActive = true;
+            displayLocked = true;
+            displayBlank = false;
+            Serial.println("ACK:HERO");
+        } else {
+            Serial.println("UNKNOWN:HERO");
         }
         return;
     }
@@ -390,8 +456,21 @@ void processCommand(const String& rawCommand) {
         return;
     }
 
+    if (command == "!STREAMON") {
+        microphoneStreamingActive = true;
+        Serial.println("!STREAMING");
+        return;
+    }
+
+    if (command == "!STREAMOFF") {
+        microphoneStreamingActive = false;
+        Serial.println("!STOPPED");
+        return;
+    }
+
     if (command == "CLEAR") {
         statusMessageActive = false;
+        heroModeActive = false;
         displayBlank = true;
         Serial.println("ACK:CLEAR");
         return;
@@ -399,6 +478,7 @@ void processCommand(const String& rawCommand) {
 
     if (command == "UNLOCK") {
         statusMessageActive = false;
+        heroModeActive = false;
         displayLocked = false;
         displayBlank = false;
         lastChange = millis();
@@ -486,6 +566,11 @@ void renderDisplay() {
         return;
     }
 
+    if (heroModeActive) {
+        renderHeroCard();
+        return;
+    }
+
     if (startupAnimationActive) {
         const unsigned long elapsed = now - startupAnimationStart;
         const unsigned long clampedElapsed = min(elapsed, ANIMATION_DURATION_MS);
@@ -537,12 +622,18 @@ void setup() {
     startupAnimationStart = millis();
 
     Serial.println("ESP32-S3 Speaker+Mic listo");
-    Serial.println("Comandos: START, ROUND, OK, ERR, GAMEOVER, TEST, SHOW, TEXT, CLEAR, UNLOCK, !LOAD, !PLAYBUF, !REC <ms>");
+    Serial.println("Comandos: START, ROUND, OK, ERR, GAMEOVER, TEST, SHOW, HERO, TEXT, CLEAR, UNLOCK, !LOAD, !PLAYBUF, !REC <ms>, !STREAMON, !STREAMOFF");
 
     soundStart();
 }
 
 void loop() {
     readSerialCommands();
+    if (microphoneStreamingActive) {
+        if (!streamMicrophoneChunk()) {
+            microphoneStreamingActive = false;
+            Serial.println("!ERROR");
+        }
+    }
     renderDisplay();
 }
