@@ -41,10 +41,10 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SIMON_LEARNED_SAMPLES_FILE = PROJECT_ROOT / "data" / "aprendizaje.json"
 GAME_HEROES = (
-    {"name": "Spider-Man", "display_id": "1"},
-    {"name": "Batman", "display_id": "2"},
-    {"name": "Superman", "display_id": "3"},
-    {"name": "Capitan America", "display_id": "4"},
+    {"name": "Azul", "display_id": "1"},
+    {"name": "Amarillo", "display_id": "2"},
+    {"name": "Rojo", "display_id": "3"},
+    {"name": "Verde", "display_id": "4"},
 )
 SERIAL_PORT = "COM4"
 SERIAL_BAUDRATE = 921600
@@ -60,16 +60,16 @@ ESP32_MAX_RECORD_MS = 28000
 SERIAL_AUDIO_RESPONSE_TIMEOUT = 20.0
 SERIAL_AUDIO_CHUNK_DELAY = 0.003
 DEBUG_SERIAL = False
-VOICE_LANGUAGE = None
+VOICE_LANGUAGE = "es"
 VOICE_MODEL_SIZE = "base"
 VOICE_DEVICE = "cpu"
 VOICE_COMPUTE_TYPE = "int8"
-VOICE_TIMEOUT_BASE_MS = 3500
-VOICE_TIMEOUT_PER_POKEMON_MS = 2200
+VOICE_TIMEOUT_BASE_MS = 2500
+VOICE_TIMEOUT_PER_POKEMON_MS = 1600
 VOICE_READY_DELAY_SECONDS = 0.9
 VOICE_MAX_ATTEMPTS = 2
 VOICE_MAX_CAPTURE_RETRIES = 4
-VOICE_FUZZY_MIN_SCORE = 0.72
+VOICE_FUZZY_MIN_SCORE = 0.62
 STREAM_CHUNK_TIMEOUT_SECONDS = 2.5
 STREAM_SPEECH_THRESHOLD = 180
 STREAM_MIN_SPEECH_MS = 300
@@ -80,13 +80,10 @@ STREAM_FAST_CUTOFF_AFTER_SPEECH_MS = 900
 STREAM_PREROLL_CHUNKS = 12
 STREAM_MIN_FALLBACK_AUDIO_MS = 1200
 VOICE_INITIAL_PROMPT = (
-    "Spider-Man, Batman, Superman, Capitan America, Captain America, "
-    "Hombre Arana, Batman, Superman, Capitan America."
+    "Azul, amarillo, rojo, verde. "
+    "Los colores posibles son azul, amarillo, rojo y verde."
 )
-VOICE_HOTWORDS = (
-    "Spider-Man, Spiderman, Hombre Arana, Batman, Superman, "
-    "Capitan America, Captain America"
-)
+VOICE_HOTWORDS = "Azul, amarillo, rojo, verde"
 VOICE_FRAGMENT_SEPARATORS = r"(?:,| y | e | luego | despues | despues de | seguido de | entonces )"
 EXIT_COMMANDS = ("salir", "regresar", "volver", "menu", "menú")
 
@@ -171,35 +168,23 @@ def generar_variantes_foneticas(texto: str) -> list[str]:
     agregar(texto_normalizado.replace("ee", "i"))
     agregar(texto_normalizado.replace("oo", "u"))
 
-    if "squirt" in texto_normalizado or "cuirt" in texto_normalizado:
-        agregar("squirtle")
-        agregar("squirtel")
-        agregar("quarter")
-        agregar("cuarter")
-        agregar("cuarto")
+    if "azu" in texto_normalizado:
+        agregar("azul")
+        agregar("asul")
 
-    if "quarter" in texto_normalizado or "cuarter" in texto_normalizado:
-        agregar("cuarto")
-        agregar("squirtle")
-        agregar("squirtel")
+    if "ama" in texto_normalizado or "amariy" in texto_normalizado:
+        agregar("amarillo")
+        agregar("amariyo")
+        agregar("amariyo")
+        agregar("amario")
 
-    if "spider" in texto_normalizado or "ara" in texto_normalizado:
-        agregar("spiderman")
-        agregar("spider man")
-        agregar("hombre arana")
+    if "roj" in texto_normalizado:
+        agregar("rojo")
+        agregar("roho")
 
-    if "bat" in texto_normalizado:
-        agregar("batman")
-        agregar("bat man")
-
-    if "super" in texto_normalizado:
-        agregar("superman")
-        agregar("super man")
-
-    if "capitan" in texto_normalizado or "captain" in texto_normalizado or "america" in texto_normalizado:
-        agregar("capitan america")
-        agregar("captain america")
-        agregar("capitan")
+    if "verd" in texto_normalizado or "berd" in texto_normalizado:
+        agregar("verde")
+        agregar("berde")
 
     return variantes
 
@@ -973,7 +958,7 @@ def escuchar_respuesta_por_voz(
     catalogo_pokemon: list[tuple[str, str]],
     longitud_esperada: int,
 ) -> tuple[list[str], str, bool]:
-    """Graba voz desde la ESP32, la transcribe y extrae la secuencia de heroes pronunciada."""
+    """Graba voz desde la ESP32, la transcribe y extrae la secuencia de colores pronunciada."""
     if ser is None or transcriptor is None:
         return [], "", False
 
@@ -983,7 +968,7 @@ def escuchar_respuesta_por_voz(
     print(f"Habla ahora. Tienes aproximadamente {duracion_ms / 1000:.1f} segundos...")
     time.sleep(VOICE_READY_DELAY_SECONDS)
 
-    pcm = capturar_fragmento_streaming_esp32(ser, duracion_ms=duracion_ms)
+    pcm = grabar_microfono_esp32(ser, duracion_ms=duracion_ms)
     if not pcm:
         return [], "", False
 
@@ -1302,15 +1287,15 @@ def jugar_simon_pokemon(
     secuencia = []
     puntaje = 0
 
-    print("Bienvenido a Simon Superheroes.")
+    print("Bienvenido a Simon de colores.")
     if modo_voz and ser is not None and transcriptor is not None:
-        print("Mira la secuencia de heroes en el display y luego repitela hablando al microfono.")
+        print("Mira la secuencia de colores en el display y luego repitela hablando al microfono.")
         print("El juego escuchara desde el microfono de la ESP32.")
     else:
         print("Aviso: no hay reconocimiento por voz disponible en este momento.")
     print("El juego termina cuando falles.\n")
     notificar_inicio_juego(ser)
-    mostrar_mensaje_esp32(ser, "Superheroes", "Preparate")
+    mostrar_mensaje_esp32(ser, "Simon colores", "Preparate")
 
     while True:
         nuevo_pokemon = obtener_siguiente_pokemon(nombres)
@@ -1337,7 +1322,7 @@ def jugar_simon_pokemon(
             return False
 
         if texto_detectado:
-            print(f"Heroes detectados: {', '.join(respuesta) if respuesta else '(ninguno)'}")
+            print(f"Colores detectados: {', '.join(respuesta) if respuesta else '(ninguno)'}")
 
         if secuencias_iguales(secuencia, respuesta):
             if aprender_desde_ronda_correcta(

@@ -4,7 +4,7 @@ from app.desktop.simon_pokemon import ejecutar_juego
 
 def mostrar_menu() -> str:
     print("\nMenu de Inicio")
-    print("1. Juego Simon Superheroes")
+    print("1. Juego Simon de colores")
     print("2. Pokedex por voz")
     print("0. Salir")
     return input("Elige una opcion: ").strip()

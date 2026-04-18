@@ -43,6 +43,7 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 POKEDEX_FILE = PROJECT_ROOT / "data" / "pokedex.json"
 LEARNED_SAMPLES_FILE = PROJECT_ROOT / "data" / "aprendizaje.json"
+POKEMON_SOUNDS_DIR = PROJECT_ROOT / "assets" / "audio" / "pokesounds"
 
 SERIAL_PORT = "COM4"
 SERIAL_BAUDRATE = 921600
@@ -60,7 +61,28 @@ VOICE_MODEL_SIZE = "base"
 VOICE_DEVICE = "cpu"
 VOICE_COMPUTE_TYPE = "int8"
 VOICE_LANGUAGE = "es"
-QUESTION_TIMEOUT_MS = 15000
+VOICE_DEFAULT_POKEMON_HINTS = (
+    "Pikachu",
+    "Charizard",
+    "Charmander",
+    "Bulbasaur",
+    "Squirtle",
+    "Mew",
+    "Mewtwo",
+    "Eevee",
+    "Snorlax",
+    "Gengar",
+    "Jigglypuff",
+    "Psyduck",
+    "Meowth",
+    "Mr. Mime",
+    "Dragonite",
+    "Jolteon",
+    "Vaporeon",
+    "Flareon",
+)
+VOICE_WHISPER_HINT_LIMIT = 12
+QUESTION_TIMEOUT_MS = 4000
 VOICE_MAX_ATTEMPTS = 2
 STREAM_CHUNK_TIMEOUT_SECONDS = 2.5
 STREAM_SPEECH_THRESHOLD = 180
@@ -189,6 +211,15 @@ def normalizar_texto(texto: str) -> str:
     return " ".join(texto.split())
 
 
+def normalizar_nombre_archivo(nombre: str) -> str:
+    nombre_normalizado = normalizar_texto(nombre)
+    nombre_normalizado = nombre_normalizado.replace(" ", "_")
+    nombre_normalizado = nombre_normalizado.replace("(", "")
+    nombre_normalizado = nombre_normalizado.replace(")", "")
+    nombre_normalizado = nombre_normalizado.replace(".", "")
+    return nombre_normalizado
+
+
 def traducir_lista(lista: list[str]) -> list[str]:
     return [TIPOS_ES.get(str(valor), str(valor)) for valor in lista]
 
@@ -285,6 +316,15 @@ def generar_variantes_foneticas(texto: str) -> list[str]:
     agregar(texto_normalizado.replace("ew", "iu"))
     agregar(texto_normalizado.replace("w", "u"))
     agregar(texto_normalizado.replace("oo", "u"))
+    agregar(texto_normalizado.replace("ph", "f"))
+    agregar(texto_normalizado.replace("qu", "k"))
+    agregar(texto_normalizado.replace("ck", "k"))
+    agregar(texto_normalizado.replace("v", "b"))
+    agregar(texto_normalizado.replace("b", "v"))
+    agregar(texto_normalizado.replace("y", "i"))
+
+    if " " in texto_normalizado:
+        agregar(texto_normalizado.replace(" ", ""))
 
     if len(tokens) == 1 and len(texto_normalizado) <= 4 and texto_normalizado.endswith("l"):
         agregar(texto_normalizado[:-1] + "u")
@@ -301,8 +341,54 @@ def generar_aliases_nombre(nombre: str) -> list[str]:
 
     if nombre_normalizado.startswith("mr "):
         aliases.append(nombre_normalizado[3:].strip())
+        aliases.append(nombre_normalizado.replace(" ", ""))
 
     return list(dict.fromkeys(alias for alias in aliases if alias))
+
+
+def construir_pistas_whisper_pokemon(
+    lista_pokemon: list[dict],
+    muestras_aprendidas: list[dict[str, str]],
+) -> tuple[str, str | None]:
+    pistas: list[str] = []
+
+    def agregar(valor: str) -> None:
+        texto = valor.strip()
+        if texto and texto not in pistas:
+            pistas.append(texto)
+
+    for nombre in VOICE_DEFAULT_POKEMON_HINTS:
+        agregar(nombre)
+
+    for pokemon in lista_pokemon:
+        nombre = pokemon.get("name")
+        if isinstance(nombre, str) and nombre.strip():
+            agregar(nombre.strip())
+
+    for muestra in muestras_aprendidas:
+        agregar(muestra["text"])
+
+    pistas = pistas[:VOICE_WHISPER_HINT_LIMIT]
+    initial_prompt = (
+        "Pregunta en espanol sobre Pokemon. "
+        "Ejemplos: hablame de Pikachu, que tipo es Charizard, "
+        "cual es el Pokemon numero 25, cuales son las debilidades de Mewtwo."
+    )
+    hotwords = None
+    return initial_prompt, hotwords
+
+
+def recuperar_serial_esp32(ser) -> None:
+    if ser is None:
+        return
+
+    try:
+        time.sleep(0.15)
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        ser.flush()
+    except Exception:
+        pass
 
 
 def construir_indice_pokemon(lista_pokemon: list[dict]) -> dict[str, dict]:
@@ -350,6 +436,8 @@ def construir_modelo_nombres(
 
     for muestra in muestras_aprendidas:
         if muestra["label"] not in labels_validos:
+            continue
+        if not es_fragmento_aprendible(muestra["text"], muestra["label"]):
             continue
         for variante in generar_variantes_foneticas(muestra["text"]):
             sample_texts.append(variante)
@@ -436,6 +524,9 @@ def aprender_desde_prediccion(
     if prediccion.fragment == label:
         return False
 
+    if not es_fragmento_aprendible(prediccion.fragment, label):
+        return False
+
     for muestra in muestras_aprendidas:
         if muestra["text"] == prediccion.fragment and muestra["label"] == label:
             return False
@@ -446,6 +537,49 @@ def aprender_desde_prediccion(
 
     muestras_aprendidas.append({"text": prediccion.fragment, "label": label})
     return True
+
+
+def es_fragmento_aprendible(fragmento: str, label: str) -> bool:
+    fragmento_norm = normalizar_texto(fragmento)
+    label_norm = normalizar_texto(label)
+    if not fragmento_norm or not label_norm:
+        return False
+
+    tokens_fragmento = fragmento_norm.split()
+    tokens_label = label_norm.split()
+    if not tokens_fragmento:
+        return False
+
+    if len(tokens_fragmento) > max(1, len(tokens_label)):
+        return False
+
+    if len(tokens_fragmento) > 1 and len(set(tokens_fragmento)) == 1:
+        return False
+
+    return True
+
+
+def limpiar_muestras_aprendidas(
+    muestras_aprendidas: list[dict[str, str]],
+    labels_validos: set[str],
+) -> list[dict[str, str]]:
+    muestras_limpias: list[dict[str, str]] = []
+    vistos: set[tuple[str, str]] = set()
+
+    for muestra in muestras_aprendidas:
+        texto = muestra["text"]
+        label = muestra["label"]
+        clave = (texto, label)
+
+        if label in labels_validos and not es_fragmento_aprendible(texto, label):
+            continue
+        if clave in vistos:
+            continue
+
+        vistos.add(clave)
+        muestras_limpias.append({"text": texto, "label": label})
+
+    return muestras_limpias
 
 
 def detectar_intencion(pregunta: str) -> str | None:
@@ -607,7 +741,7 @@ def responder_pregunta(
         return "No pude identificar el nombre del Pokemon en tu pregunta.", prediccion
 
     if prediccion.score < NAME_MIN_SCORE or prediccion.margin < NAME_MIN_MARGIN:
-        return "No pude identificar con suficiente confianza el Pokemon de tu pregunta.", prediccion
+        return "No pude identificar al Pokemon, intentalo de nuevo.", prediccion
 
     pokemon = indice.get(prediccion.label)
     if pokemon is None:
@@ -924,7 +1058,12 @@ def cargar_transcriptor_voz():
     )
 
 
-def transcribir_wav_con_whisper(transcriptor, audio_path: Path) -> str:
+def transcribir_wav_con_whisper(
+    transcriptor,
+    audio_path: Path,
+    initial_prompt: str | None = None,
+    hotwords: str | None = None,
+) -> str:
     return _transcribe_wav_with_whisper(
         transcriptor,
         audio_path,
@@ -934,6 +1073,8 @@ def transcribir_wav_con_whisper(transcriptor, audio_path: Path) -> str:
         best_of=5,
         temperature=0.0,
         condition_on_previous_text=False,
+        initial_prompt=initial_prompt,
+        hotwords=hotwords,
         without_timestamps=True,
     )
 
@@ -989,6 +1130,53 @@ def wav_a_pcm16_mono_16k(path: Path | str) -> bytes:
     return audio.tobytes()
 
 
+def buscar_audio_pokemon(nombre: str, sounds_dir: Path) -> Path | None:
+    nombre_normalizado = normalizar_nombre_archivo(nombre)
+
+    for patron in ("*.wav", "*.WAV"):
+        for candidato in sounds_dir.glob(patron):
+            stem_normalizado = normalizar_nombre_archivo(candidato.stem)
+            if stem_normalizado == nombre_normalizado:
+                return candidato
+
+            if " - " not in candidato.stem:
+                continue
+
+            _, nombre_archivo = candidato.stem.split(" - ", 1)
+            if normalizar_nombre_archivo(nombre_archivo) == nombre_normalizado:
+                return candidato
+
+    return None
+
+
+def enviar_audio_wav_a_esp32(ser, audio_path: Path) -> bool:
+    if ser is None:
+        return False
+
+    try:
+        pcm = wav_a_pcm16_mono_16k(audio_path)
+    except (wave.Error, ValueError) as error:
+        print(f"Aviso: no se pudo convertir {audio_path.name}: {error}")
+        return False
+
+    if not pcm:
+        print(f"Aviso: el archivo {audio_path.name} no produjo audio PCM.")
+        return False
+
+    return enviar_pcm_a_esp32(ser, pcm, descripcion=f"audio {audio_path.name}")
+
+
+def reproducir_audio_pokemon(nombre: str, sounds_dir: Path, ser=None) -> bool:
+    audio_path = buscar_audio_pokemon(nombre, sounds_dir)
+    if audio_path is None:
+        return False
+
+    if ser is not None and enviar_audio_wav_a_esp32(ser, audio_path):
+        return True
+
+    return False
+
+
 def enviar_pcm_a_esp32(ser, pcm: bytes, descripcion: str = "audio PCM") -> bool:
     if ser is None:
         return False
@@ -1008,6 +1196,7 @@ def enviar_pcm_a_esp32(ser, pcm: bytes, descripcion: str = "audio PCM") -> bool:
         respuesta = esperar_respuesta_esp32(ser, {"!READY", "!ERROR"}, timeout=5.0)
         if respuesta != "!READY":
             print("Aviso: la ESP32 no acepto la carga de audio.")
+            recuperar_serial_esp32(ser)
             return False
 
         for inicio in range(0, len(pcm), AUDIO_CHUNK_SIZE):
@@ -1018,6 +1207,7 @@ def enviar_pcm_a_esp32(ser, pcm: bytes, descripcion: str = "audio PCM") -> bool:
         respuesta = esperar_respuesta_esp32(ser, {"!BUFFERED", "!ERROR"}, timeout=10.0)
         if respuesta != "!BUFFERED":
             print("Aviso: la ESP32 no confirmo el buffer de audio.")
+            recuperar_serial_esp32(ser)
             return False
 
         ser.write(b"!PLAYBUF\n")
@@ -1030,11 +1220,13 @@ def enviar_pcm_a_esp32(ser, pcm: bytes, descripcion: str = "audio PCM") -> bool:
         )
         if respuesta != "!DONE":
             print("Aviso: la ESP32 no confirmo la reproduccion del audio.")
+            recuperar_serial_esp32(ser)
             return False
 
         return True
     except Exception as error:
         print(f"Error enviando audio al ESP32: {error}")
+        recuperar_serial_esp32(ser)
         return False
 
 
@@ -1058,14 +1250,21 @@ def enviar_tts_a_esp32(ser, texto: str) -> bool:
             pass
 
 
-def escuchar_pregunta(ser, transcriptor) -> str:
+def escuchar_pregunta(
+    ser,
+    transcriptor,
+    initial_prompt: str | None = None,
+    hotwords: str | None = None,
+) -> str:
     if ser is None or transcriptor is None:
         return ""
 
+    recuperar_serial_esp32(ser)
+    time.sleep(0.2)
     mostrar_mensaje_esp32(ser, "Pregunta:", "Habla ahora")
     time.sleep(SERIAL_READY_DELAY_SECONDS)
 
-    pcm = capturar_fragmento_streaming_esp32(ser, duracion_ms=QUESTION_TIMEOUT_MS)
+    pcm = grabar_microfono_esp32(ser, duracion_ms=QUESTION_TIMEOUT_MS)
     if not pcm:
         return ""
 
@@ -1074,7 +1273,12 @@ def escuchar_pregunta(ser, transcriptor) -> str:
 
     try:
         guardar_pcm_como_wav(audio_path, pcm)
-        return transcribir_wav_con_whisper(transcriptor, audio_path)
+        return transcribir_wav_con_whisper(
+            transcriptor,
+            audio_path,
+            initial_prompt=initial_prompt,
+            hotwords=hotwords,
+        )
     finally:
         try:
             audio_path.unlink(missing_ok=True)
@@ -1100,6 +1304,9 @@ def responder_por_voz(
     else:
         mostrar_mensaje_esp32(ser, "Respuesta:", respuesta[:16])
     enviar_tts_a_esp32(ser, respuesta)
+    if nombre_pokemon:
+        reproducir_audio_pokemon(nombre_pokemon, POKEMON_SOUNDS_DIR, ser=ser)
+    time.sleep(0.4)
 
 
 def reproducir_bienvenida(ser) -> None:
@@ -1124,7 +1331,16 @@ def main() -> None:
         indice_nombre = construir_indice_pokemon(pokedex)
         indice_numero = construir_indice_numero(pokedex)
         muestras_aprendidas = cargar_muestras_aprendidas(LEARNED_SAMPLES_FILE)
+        labels_validos = set(indice_nombre.keys())
+        muestras_limpias = limpiar_muestras_aprendidas(muestras_aprendidas, labels_validos)
+        if muestras_limpias != muestras_aprendidas:
+            muestras_aprendidas = muestras_limpias
+            guardar_muestras_aprendidas(LEARNED_SAMPLES_FILE, muestras_aprendidas)
         modelo_nombres = construir_modelo_nombres(pokedex, muestras_aprendidas)
+        whisper_prompt, whisper_hotwords = construir_pistas_whisper_pokemon(
+            pokedex,
+            muestras_aprendidas,
+        )
     except (FileNotFoundError, ValueError) as error:
         print(f"Error: {error}")
         return
@@ -1149,7 +1365,12 @@ def main() -> None:
         while True:
             pregunta = ""
             for intento in range(VOICE_MAX_ATTEMPTS):
-                pregunta = escuchar_pregunta(ser, transcriptor)
+                pregunta = escuchar_pregunta(
+                    ser,
+                    transcriptor,
+                    initial_prompt=whisper_prompt,
+                    hotwords=whisper_hotwords,
+                )
                 if pregunta:
                     break
 
@@ -1193,6 +1414,10 @@ def main() -> None:
             if aprender_desde_prediccion(prediccion, muestras_aprendidas):
                 guardar_muestras_aprendidas(LEARNED_SAMPLES_FILE, muestras_aprendidas)
                 modelo_nombres = construir_modelo_nombres(pokedex, muestras_aprendidas)
+                whisper_prompt, whisper_hotwords = construir_pistas_whisper_pokemon(
+                    pokedex,
+                    muestras_aprendidas,
+                )
                 label_aprendido = prediccion.label
                 if label_aprendido is not None:
                     nombre_real = indice_nombre[label_aprendido]["name"]

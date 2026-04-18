@@ -65,17 +65,17 @@ void renderHeroCard() {
     displayManager.clear();
 
     if (heroIndex == 0) {
-        displayManager.drawBitmap(2, -18, spider_man_logo_bitmap, SPIDER_MAN_LOGO_WIDTH, SPIDER_MAN_LOGO_HEIGHT);
-        displayManager.drawText(20, 54, "Spider-Man", 1);
+        displayManager.drawText(18, 20, "Color:", 2);
+        displayManager.drawText(24, 48, "Azul", 2);
     } else if (heroIndex == 1) {
-        displayManager.drawText(18, 12, "BATMAN", 2);
-        displayManager.drawText(12, 40, "Heroe 2", 1);
+        displayManager.drawText(18, 20, "Color:", 2);
+        displayManager.drawText(2, 48, "Amarillo", 2);
     } else if (heroIndex == 2) {
-        displayManager.drawText(8, 12, "SUPERMAN", 2);
-        displayManager.drawText(12, 40, "Heroe 3", 1);
+        displayManager.drawText(18, 20, "Color:", 2);
+        displayManager.drawText(24, 48, "Rojo", 2);
     } else if (heroIndex == 3) {
-        displayManager.drawBitmap(2, -6, capitan_america_logo_bitmap, CAPITAN_AMERICA_LOGO_WIDTH, CAPITAN_AMERICA_LOGO_HEIGHT);
-        displayManager.drawText(8, 56, "Cap. America", 1);
+        displayManager.drawText(18, 20, "Color:", 2);
+        displayManager.drawText(16, 48, "Verde", 2);
     }
 
     displayManager.render();

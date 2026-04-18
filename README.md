@@ -1,9 +1,9 @@
-# Pokedex y Simon de Superheroes
+# Pokedex y Simon de Colores
 
 Este proyecto junta dos cosas en una sola app:
 
 1. Una `Pokedex por voz`
-2. Un juego estilo `Simon`, pero con superhéroes
+2. Un juego estilo `Simon`, pero con colores
 
 La idea general es esta:
 
@@ -11,7 +11,7 @@ La idea general es esta:
 - la `ESP32-S3` se encarga del display, el audio de salida y de mandar el audio del micrófono por serial
 - `Whisper` en Python transcribe lo que se dijo
 
-No es un proyecto “de producto final”, sino más bien un proyecto escolar que fue creciendo poco a poco. Por eso todavía hay nombres heredados de Pokémon dentro del código del juego, aunque hoy el Simon ya usa superhéroes.
+No es un proyecto “de producto final”, sino más bien un proyecto escolar que fue creciendo poco a poco. Por eso todavía hay nombres heredados de Pokémon dentro del código del juego, aunque hoy el Simon ya usa colores.
 
 ## Qué hace el proyecto
 
@@ -31,19 +31,19 @@ Además:
 - responde por voz usando TTS
 - guarda aliases aprendidos en `data/aprendizaje.json`
 
-### 2. Simon de superhéroes
+### 2. Simon de colores
 
-El juego Simon ya no usa Pokémon. Ahora trabaja con estos 4 personajes:
+El juego Simon ya no usa Pokémon ni superhéroes. Ahora trabaja con estos 4 colores:
 
-- `Spider-Man`
-- `Batman`
-- `Superman`
-- `Capitan America`
+- `Azul`
+- `Amarillo`
+- `Rojo`
+- `Verde`
 
 El juego:
 
 - genera una secuencia aleatoria
-- muestra cada héroe en el display
+- muestra cada color en el display
 - escucha tu respuesta por voz
 - compara la secuencia
 - sigue avanzando mientras no falles
@@ -77,7 +77,7 @@ flowchart TD
     E --> F{Modo seleccionado}
 
     F --> G[Pokédex por voz]
-    F --> H[Simon de superhéroes]
+    F --> H[Simon de colores]
     F --> I[Salir]
 
     G --> J[ESP32 recibe audio del micrófono INMP441]
@@ -106,12 +106,12 @@ flowchart TD
 
     H --> AB[Iniciar juego Simon]
     AB --> AC[Generar secuencia aleatoria]
-    AC --> AD[Mostrar héroes en display]
+    AC --> AD[Mostrar colores en display]
     AD --> AE[Activar escucha]
     AE --> AF[ESP32 transmite audio en streaming]
     AF --> AG[Python detecta voz y silencio]
     AG --> AH[Whisper transcribe respuesta]
-    AH --> AI[Mapear texto a héroes]
+    AH --> AI[Mapear texto a colores]
     AI --> AJ{Secuencia correcta}
 
     AJ -->|Sí| AK[Avanzar a la siguiente ronda]
@@ -160,9 +160,6 @@ flowchart TD
 - [firmware/projects/pokedex-c/pokedex-c.ino](/abs/c:/Users/jazie/OneDrive/Documentos/escuela/proyecto-pokedex/pokemon-micropython/firmware/projects/pokedex-c/pokedex-c.ino)
   Firmware de la ESP32-S3
 
-- [firmware/projects/pokedex-c/HeroLogos.h](/abs/c:/Users/jazie/OneDrive/Documentos/escuela/proyecto-pokedex/pokemon-micropython/firmware/projects/pokedex-c/HeroLogos.h)
-  Bitmaps de logos para el juego de superhéroes
-
 ## Cómo correrlo
 
 ### Opción 1. Usar el menú principal
@@ -173,7 +170,7 @@ py main.py
 
 Ese menú deja elegir:
 
-- `1` Juego Simon Superheroes
+- `1` Juego Simon de colores
 - `2` Pokedex por voz
 - `0` Salir
 
@@ -191,7 +188,7 @@ py simon_pokemon.py
 
 ## Dependencias de Python
 
-Las más importantes son estas:
+Las librerías externas más importantes son estas:
 
 - `pyserial`
 - `faster-whisper`
@@ -207,6 +204,74 @@ pip install pyserial faster-whisper numpy scikit-learn scipy pyttsx3
 ```
 
 Si usas `.venv`, entonces se instalan dentro de ese entorno.
+
+### Librerías de Python que usa el proyecto
+
+Además de las dependencias externas, el código usa varias librerías de la biblioteca estándar de Python.
+
+#### Librerías externas
+
+- `pyserial`
+  para la comunicación serial entre Python y la ESP32
+
+- `faster-whisper`
+  para transcribir audio a texto
+
+- `numpy`
+  para manejar y transformar audio en arreglos numéricos
+
+- `scikit-learn`
+  para el modelo de texto de la Pokédex, sobre todo con `TfidfVectorizer` y `cosine_similarity`
+
+- `scipy`
+  para tipos usados en el manejo del modelo, como `spmatrix`
+
+- `pyttsx3`
+  para generar la voz TTS de salida en la Pokédex
+
+#### Librerías estándar de Python
+
+- `json`
+  para leer y guardar archivos como `pokedex.json` y `aprendizaje.json`
+
+- `os`
+  para operaciones del sistema y manejo de archivos
+
+- `random`
+  para generar secuencias aleatorias en el Simon
+
+- `re`
+  para expresiones regulares y limpieza de texto
+
+- `sys`
+  para utilidades generales del intérprete
+
+- `tempfile`
+  para crear archivos temporales WAV durante la transcripción o TTS
+
+- `time`
+  para pausas, tiempos de espera y control de estados
+
+- `unicodedata`
+  para normalizar texto y quitar acentos
+
+- `wave`
+  para leer y escribir archivos WAV
+
+- `array`
+  para procesar muestras PCM de audio
+
+- `collections.deque`
+  para manejar buffers cortos de audio en streaming
+
+- `difflib.SequenceMatcher`
+  para comparar similitud entre textos
+
+- `dataclasses`
+  para estructuras de datos simples en la Pokédex
+
+- `pathlib.Path`
+  para manejar rutas de archivos de forma más clara
 
 ## Cómo funciona la Pokédex
 
@@ -233,13 +298,13 @@ La Pokédex soporta varias formas de identificar:
 
 En cada ronda:
 
-1. se agrega un héroe nuevo a la secuencia
+1. se agrega un color nuevo a la secuencia
 2. la ESP32 lo muestra en pantalla
 3. cuando termina la secuencia, el juego entra a modo escucha
 4. Python recibe el audio de la ESP32 por streaming
 5. corta el fragmento cuando detecta voz y luego silencio
 6. Whisper transcribe
-7. el juego intenta mapear el texto a los 4 héroes
+7. el juego intenta mapear el texto a los 4 colores
 8. si acertaste, sigue la siguiente ronda
 9. si fallaste, termina y muestra el puntaje
 
@@ -247,9 +312,9 @@ En cada ronda:
 
 ```mermaid
 flowchart TD
-    A[Inicio del juego Simon] --> B[Inicializar lista de héroes]
+    A[Inicio del juego Simon] --> B[Inicializar lista de colores]
     B --> C[Crear secuencia vacía]
-    C --> D[Agregar héroe aleatorio a la secuencia]
+    C --> D[Agregar color aleatorio a la secuencia]
     D --> E[Mostrar secuencia en display]
     E --> F[Activar streaming de micrófono]
     F --> G[Recibir audio desde ESP32]
@@ -257,7 +322,7 @@ flowchart TD
     H --> I[Detectar silencio final]
     I --> J[Convertir audio a WAV temporal]
     J --> K[Transcribir con Whisper]
-    K --> L[Interpretar nombres de héroes]
+    K --> L[Interpretar nombres de colores]
     L --> M[Comparar con secuencia esperada]
     M --> N{Coincide?}
 
@@ -290,7 +355,7 @@ El archivo [aprendizaje.json](/abs/c:/Users/jazie/OneDrive/Documentos/escuela/pr
 Ejemplos de lo que puede guardar:
 
 - variantes de nombres de Pokémon
-- variantes de héroes del Simon
+- variantes de colores del Simon
 - aliases útiles que se fueron aprendiendo con el uso
 
 La idea es que el sistema se vuelva más tolerante con pronunciaciones y transcripciones raras.
@@ -340,7 +405,7 @@ Estas librerías permiten:
 - configurar I2S para audio
 - dibujar texto e imágenes en el display
 - usar sprites de Pokémon
-- usar logos para el juego de superhéroes
+- aunque ese archivo sigue existiendo, el juego actual ya no usa logos
 
 También se crea un objeto global:
 
@@ -367,10 +432,10 @@ Las más importantes son:
   activa la vista de mensaje de texto
 
 - `heroModeActive`
-  activa la vista del Simon de superhéroes
+  activa la vista del Simon por colores
 
 - `heroIndex`
-  indica qué héroe mostrar
+  indica qué color mostrar
 
 - `microphoneStreamingActive`
   indica si la ESP32 está mandando audio del micrófono por streaming a Python
@@ -448,12 +513,12 @@ Aquí hay dos funciones visuales clave:
 
 `renderHeroCard()` dibuja la pantalla especial del Simon:
 
-- héroe 1: Spider-Man
-- héroe 2: Batman
-- héroe 3: Superman
-- héroe 4: Capitán América
+- color 1: Azul
+- color 2: Amarillo
+- color 3: Rojo
+- color 4: Verde
 
-En el caso de Spider-Man y Capitán América ya se usan bitmaps definidos en `HeroLogos.h`.
+Ahora esa pantalla ya no usa logos; muestra directamente el nombre del color.
 
 ### 7. Cómo decide qué mostrar
 
@@ -463,7 +528,7 @@ Esa función revisa el estado general y decide qué dibujar, en este orden:
 
 1. si `displayBlank` está activo, deja la pantalla en blanco
 2. si `statusMessageActive` está activo, muestra texto
-3. si `heroModeActive` está activo, muestra la tarjeta del héroe
+3. si `heroModeActive` está activo, muestra la tarjeta del color
 4. si sigue la animación de arranque, dibuja el logo inicial
 5. si nada de eso aplica, entra al modo normal de Pokédex y rota entre Pokémon
 
@@ -553,7 +618,7 @@ Comandos importantes:
   muestra un Pokémon por número
 
 - `HERO`
-  muestra un héroe del Simon
+  muestra un color del Simon
 
 - `!LOAD`
   carga audio PCM en memoria
@@ -679,7 +744,6 @@ pokemon-micropython/
 |-- firmware/
 |   `-- projects/
 |       `-- pokedex-c/
-|           |-- HeroLogos.h
 |           `-- pokedex-c.ino
 |-- main.py
 |-- pokedex.py
@@ -723,7 +787,7 @@ Sistema principal
 |
 |-- app/desktop/simon_pokemon.py
 |   |-- generar secuencia
-|   |-- mostrar héroes
+|   |-- mostrar colores
 |   |-- escuchar respuesta del jugador
 |   |-- transcribir audio
 |   |-- comparar secuencia
@@ -786,12 +850,12 @@ Sistema principal
 
 **Proceso**
 
-- generar secuencia de héroes
+- generar secuencia de colores
 - mostrar la secuencia en display
 - activar escucha por streaming
 - recibir audio desde la ESP32
 - transcribir con Whisper
-- convertir texto a nombres de héroes
+- convertir texto a nombres de colores
 - comparar contra la secuencia esperada
 
 **Salida**
@@ -811,7 +875,7 @@ Sistema principal
 **Proceso**
 
 - interpretar comandos
-- dibujar mensajes, sprites o héroes en el display
+- dibujar mensajes, sprites o colores en el display
 - reproducir audio por I2S
 - mandar audio del micrófono a Python
 
@@ -855,7 +919,7 @@ flowchart LR
     D((Preguntar por número))
     E((Preguntar por nombre))
     F((Escuchar respuesta por voz))
-    G((Ver héroes en display))
+    G((Ver colores en display))
     H((Repetir secuencia))
     I((Salir del sistema))
 
@@ -939,8 +1003,8 @@ No son diagramas UML “puristas” al 100%, pero para documentación escolar s�
 ## Cosas que todavía se pueden mejorar
 
 - afinar todavía más el reconocimiento de voz del juego
-- limpiar nombres heredados de Pokémon dentro del Simon
-- agregar los logos faltantes de Batman y Superman al firmware
+- limpiar más nombres heredados de Pokémon dentro del Simon
+- simplificar algunos nombres internos como `heroModeActive` para que coincidan mejor con el juego actual
 - mejorar la detección para cortar exactamente cuando ya reconoció toda la secuencia
 - ordenar un poco más el archivo `aprendizaje.json`
 

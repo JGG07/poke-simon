@@ -4,20 +4,8 @@
     "label": "mew"
   },
   {
-    "text": "a la casam",
-    "label": "alakazam"
-  },
-  {
     "text": "armeleon",
     "label": "charmeleon"
-  },
-  {
-    "text": "hola casam",
-    "label": "alakazam"
-  },
-  {
-    "text": "a la",
-    "label": "alakazam"
   },
   {
     "text": "ivasort",
@@ -48,10 +36,6 @@
     "label": "bulbasaur"
   },
   {
-    "text": "boy batur",
-    "label": "bulbasaur"
-  },
-  {
     "text": "volvo",
     "label": "bulbasaur"
   },
@@ -60,40 +44,8 @@
     "label": "squirtle"
   },
   {
-    "text": "thats all i have for you",
-    "label": "bulbasaur"
-  },
-  {
-    "text": "boy whats wrong",
-    "label": "bulbasaur"
-  },
-  {
-    "text": "all of us are all of us are",
-    "label": "bulbasaur"
-  },
-  {
-    "text": "boil water",
-    "label": "bulbasaur"
-  },
-  {
-    "text": "paul busser",
-    "label": "bulbasaur"
-  },
-  {
     "text": "quartle",
     "label": "squirtle"
-  },
-  {
-    "text": "is called poo",
-    "label": "squirtle"
-  },
-  {
-    "text": "chana mandir",
-    "label": "charmander"
-  },
-  {
-    "text": "bulba saur",
-    "label": "bulbasaur"
   },
   {
     "text": "bulbasor",
@@ -128,14 +80,6 @@
     "label": "bulbasaur"
   },
   {
-    "text": "bulba sor",
-    "label": "bulbasaur"
-  },
-  {
-    "text": "bulba sur",
-    "label": "bulbasaur"
-  },
-  {
     "text": "bulbasorh",
     "label": "bulbasaur"
   },
@@ -144,15 +88,7 @@
     "label": "bulbasaur"
   },
   {
-    "text": "char mander",
-    "label": "charmander"
-  },
-  {
     "text": "charmandar",
-    "label": "charmander"
-  },
-  {
-    "text": "cant remember",
     "label": "charmander"
   },
   {
@@ -161,10 +97,6 @@
   },
   {
     "text": "charmanter",
-    "label": "charmander"
-  },
-  {
-    "text": "charman der",
     "label": "charmander"
   },
   {
@@ -200,10 +132,6 @@
     "label": "squirtle"
   },
   {
-    "text": "squir tle",
-    "label": "squirtle"
-  },
-  {
     "text": "escuirtel",
     "label": "squirtle"
   },
@@ -224,10 +152,6 @@
     "label": "squirtle"
   },
   {
-    "text": "cure monday",
-    "label": "squirtle"
-  },
-  {
     "text": "skuirtle",
     "label": "squirtle"
   },
@@ -245,10 +169,6 @@
   },
   {
     "text": "pikatchu",
-    "label": "pikachu"
-  },
-  {
-    "text": "pika chu",
     "label": "pikachu"
   },
   {
@@ -284,12 +204,12 @@
     "label": "pikachu"
   },
   {
-    "text": "pica chu",
-    "label": "pikachu"
+    "text": "meutuo",
+    "label": "mewtwo"
   },
   {
-    "text": "pika chuu",
-    "label": "pikachu"
+    "text": "miutwo",
+    "label": "mewtwo"
   },
   {
     "text": "uno",
@@ -348,38 +268,6 @@
     "label": "menu salir"
   },
   {
-    "text": "una",
-    "label": "menu juego"
-  },
-  {
-    "text": "juego de superheroes",
-    "label": "menu juego"
-  },
-  {
-    "text": "uno",
-    "label": "menu juego"
-  },
-  {
-    "text": "uno",
-    "label": "menu juego"
-  },
-  {
-    "text": "uno",
-    "label": "menu juego"
-  },
-  {
-    "text": "salir",
-    "label": "menu salir"
-  },
-  {
-    "text": "una",
-    "label": "menu juego"
-  },
-  {
-    "text": "salida",
-    "label": "menu salir"
-  },
-  {
     "text": "spiderman",
     "label": "spider man"
   },
@@ -420,7 +308,55 @@
     "label": "capitan america"
   },
   {
-    "text": "batman batman",
-    "label": "batman"
+    "text": "109",
+    "label": "koffing"
+  },
+  {
+    "text": "150",
+    "label": "mewtwo"
+  },
+  {
+    "text": "primero70",
+    "label": "primeape"
+  },
+  {
+    "text": "70",
+    "label": "weepinbell"
+  },
+  {
+    "text": "20",
+    "label": "raticate"
+  },
+  {
+    "text": "azul",
+    "label": "azul"
+  },
+  {
+    "text": "asul",
+    "label": "azul"
+  },
+  {
+    "text": "amarillo",
+    "label": "amarillo"
+  },
+  {
+    "text": "amariyo",
+    "label": "amarillo"
+  },
+  {
+    "text": "rojo",
+    "label": "rojo"
+  },
+  {
+    "text": "roho",
+    "label": "rojo"
+  },
+  {
+    "text": "verde",
+    "label": "verde"
+  },
+  {
+    "text": "berde",
+    "label": "verde"
   }
 ]
